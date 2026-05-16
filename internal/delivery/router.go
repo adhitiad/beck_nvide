@@ -138,8 +138,8 @@ func SetupRouter(
 
 	// VOD Management
 	protected.HandleFunc("/vods", vodHandler.UploadVOD).Methods("POST")
-	router.HandleFunc("/vods", vodHandler.GetVODList).Methods("GET")
-	router.HandleFunc("/vods/{vod_id}", vodHandler.GetVODDetail).Methods("GET")
+	apiV1.HandleFunc("/vods", vodHandler.GetVODList).Methods("GET")
+	apiV1.HandleFunc("/vods/{vod_id}", vodHandler.GetVODDetail).Methods("GET")
 	protected.HandleFunc("/vods/{vod_id}/visibility", vodHandler.UpdateVisibility).Methods("PUT")
 	protected.HandleFunc("/vods/{vod_id}", vodHandler.DeleteVOD).Methods("DELETE")
 
