@@ -1,0 +1,208 @@
+package delivery
+
+import (
+	"encoding/json"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
+
+	"github.com/gorilla/mux"
+	"go.uber.org/zap"
+
+	"nvide-live/internal/domain"
+)
+
+type VODHandler struct {
+	vodUseCase domain.VODUseCaseInterface
+	logger     *zap.Logger
+}
+
+func NewVODHandler(vodUseCase domain.VODUseCaseInterface, logger *zap.Logger) *VODHandler {
+	return &VODHandler{
+		vodUseCase: vodUseCase,
+		logger:     logger,
+	}
+}
+
+func (h *VODHandler) writeJSON(w http.ResponseWriter, status int, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(data)
+}
+
+func (h *VODHandler) writeError(w http.ResponseWriter, status int, code, message string) {
+	h.writeJSON(w, status, map[string]string{
+		"error_code": code,
+		"message":    message,
+	})
+}
+
+// UploadVOD handles multipart upload
+func (h *VODHandler) UploadVOD(w http.ResponseWriter, r *http.Request) {
+	userIDVal := r.Context().Value("user_id")
+	if userIDVal == nil {
+		h.writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "User not authenticated")
+		return
+	}
+	userID, _ := domain.FromString(userIDVal.(string))
+
+	// 500 MB max
+	r.ParseMultipartForm(500 << 20)
+
+	file, header, err := r.FormFile("video")
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "INVALID_FILE", "Video file is required")
+		return
+	}
+	defer file.Close()
+
+	title := r.FormValue("title")
+	if title == "" {
+		h.writeError(w, http.StatusBadRequest, "INVALID_TITLE", "Title is required")
+		return
+	}
+	description := r.FormValue("description")
+	visibility := r.FormValue("visibility")
+	if visibility == "" {
+		visibility = domain.VODVisibilityPublic
+	}
+
+	// Save to temp
+	tempFile, err := os.CreateTemp("", "upload-*.mp4")
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to create temp file")
+		return
+	}
+	defer tempFile.Close()
+
+	if _, err := io.Copy(tempFile, file); err != nil {
+		h.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to save temp file")
+		return
+	}
+	tempFilePath := tempFile.Name()
+
+	vod, err := h.vodUseCase.UploadVideo(r.Context(), userID, title, description, visibility, tempFilePath, header.Filename)
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+
+	h.writeJSON(w, http.StatusAccepted, vod)
+}
+
+func (h *VODHandler) GetVODList(w http.ResponseWriter, r *http.Request) {
+	userIDStr := r.URL.Query().Get("user_id")
+	if userIDStr == "" {
+		h.writeError(w, http.StatusBadRequest, "INVALID_USER_ID", "User ID is required")
+		return
+	}
+	userID, err := domain.FromString(userIDStr)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "INVALID_USER_ID", "Invalid User ID")
+		return
+	}
+
+	limit := 10
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+	offset := 0
+	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
+		if o, err := strconv.Atoi(offsetStr); err == nil && o >= 0 {
+			offset = o
+		}
+	}
+
+	vods, err := h.vodUseCase.ListUserVODs(r.Context(), userID, limit, offset)
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, vods)
+}
+
+func (h *VODHandler) GetVODDetail(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	vodID, err := domain.FromString(vars["vod_id"])
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "INVALID_VOD_ID", "Invalid VOD ID")
+		return
+	}
+
+	vod, err := h.vodUseCase.GetVODDetail(r.Context(), vodID)
+	if err != nil {
+		h.writeError(w, http.StatusNotFound, "NOT_FOUND", "VOD not found")
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, vod)
+}
+
+type UpdateVisibilityRequest struct {
+	Visibility string `json:"visibility"`
+}
+
+func (h *VODHandler) UpdateVisibility(w http.ResponseWriter, r *http.Request) {
+	userIDVal := r.Context().Value("user_id")
+	if userIDVal == nil {
+		h.writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "User not authenticated")
+		return
+	}
+	userID, _ := domain.FromString(userIDVal.(string))
+
+	vars := mux.Vars(r)
+	vodID, err := domain.FromString(vars["vod_id"])
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "INVALID_VOD_ID", "Invalid VOD ID")
+		return
+	}
+
+	var req UpdateVisibilityRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request body")
+		return
+	}
+
+	if err := h.vodUseCase.UpdateVisibility(r.Context(), vodID, userID, req.Visibility); err != nil {
+		h.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]string{"message": "Visibility updated"})
+}
+
+func (h *VODHandler) DeleteVOD(w http.ResponseWriter, r *http.Request) {
+	userIDVal := r.Context().Value("user_id")
+	if userIDVal == nil {
+		h.writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "User not authenticated")
+		return
+	}
+	userID, _ := domain.FromString(userIDVal.(string))
+
+	vars := mux.Vars(r)
+	vodID, err := domain.FromString(vars["vod_id"])
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "INVALID_VOD_ID", "Invalid VOD ID")
+		return
+	}
+
+	if err := h.vodUseCase.DeleteVOD(r.Context(), vodID, userID); err != nil {
+		h.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]string{"message": "VOD deleted"})
+}
+
+// ServeStorage serves static files from local storage (for testing)
+func (h *VODHandler) ServeStorage(w http.ResponseWriter, r *http.Request) {
+	// Not safe for production, simple static file server
+	vars := mux.Vars(r)
+	filepathStr := vars["filepath"]
+	http.ServeFile(w, r, filepath.Join("./uploads", filepathStr))
+}
