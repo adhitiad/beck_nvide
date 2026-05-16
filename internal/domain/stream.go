@@ -29,6 +29,15 @@ type Stream struct {
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 
+	// Mux Fields
+	StreamKey    string `json:"stream_key,omitempty"`    // For RTMP push
+	PlaybackID   string `json:"playback_id,omitempty"`   // For HLS playback
+	MuxAssetID   string `json:"mux_asset_id,omitempty"`
+
+	// Virtual fields
+	Viewers      int    `json:"viewers" gorm:"-"`        // Current viewers from Redis
+	MuxPlaybackURL string `json:"mux_playback_url,omitempty" gorm:"-"`
+
 	// Relations
 	Host *User `json:"host,omitempty"`
 }

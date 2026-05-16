@@ -42,12 +42,54 @@ type User struct {
 	RoleID              string     `gorm:"type:uuid;not null"`
 	AvatarURL           string     `gorm:"type:text"`
 	IsVerified          bool       `gorm:"default:false"`
+	
+	// Better Auth Compatibility
+	Name                string     `gorm:"type:varchar(255)"`
+	EmailVerified       bool       `gorm:"default:false"`
+	Image               string     `gorm:"type:text"`
 	VerificationToken   string     `gorm:"type:varchar(255)"`
 	ResetToken          string     `gorm:"type:varchar(255)"`
 	ResetTokenExpiresAt *time.Time
 	LastLoginAt         *time.Time
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
+}
+
+// Better Auth Models
+type Session struct {
+	ID        string    `gorm:"type:varchar(255);primaryKey"`
+	ExpiresAt time.Time `gorm:"not null"`
+	Token     string    `gorm:"type:text;unique;not null"`
+	CreatedAt time.Time `gorm:"not null"`
+	UpdatedAt time.Time `gorm:"not null"`
+	IPAddress string    `gorm:"type:text"`
+	UserAgent string    `gorm:"type:text"`
+	UserID    string    `gorm:"type:uuid;not null"`
+}
+
+type Account struct {
+	ID                    string    `gorm:"type:varchar(255);primaryKey"`
+	AccountID             string    `gorm:"type:text;not null"`
+	ProviderID            string    `gorm:"type:text;not null"`
+	UserID                string    `gorm:"type:uuid;not null"`
+	AccessToken           string    `gorm:"type:text"`
+	RefreshToken          string    `gorm:"type:text"`
+	IDToken               string    `gorm:"type:text"`
+	AccessTokenExpiresAt  *time.Time
+	RefreshTokenExpiresAt *time.Time
+	Scope                 string    `gorm:"type:text"`
+	Password              string    `gorm:"type:text"`
+	CreatedAt             time.Time `gorm:"not null"`
+	UpdatedAt             time.Time `gorm:"not null"`
+}
+
+type Verification struct {
+	ID         string    `gorm:"type:varchar(255);primaryKey"`
+	Identifier string    `gorm:"type:text;not null"`
+	Value      string    `gorm:"type:text;not null"`
+	ExpiresAt  time.Time `gorm:"not null"`
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
 }
 
 type RefreshToken struct {
@@ -153,6 +195,12 @@ type Stream struct {
 	ViewerPeak    int `gorm:"default:0"`
 	TotalDuration int `gorm:"default:0"`
 	RoomID        string `gorm:"type:uuid;not null;unique"`
+	
+	// Mux Integration
+	StreamKey    string `gorm:"type:text"`
+	PlaybackID   string `gorm:"type:text"`
+	MuxAssetID   string `gorm:"type:text"`
+
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
 }
@@ -630,8 +678,8 @@ func RunAutoMigrate(dsn string) error {
 	}
 
 	return db.AutoMigrate(
-		&Role{}, &Permission{}, &RolePermission{},
-		&User{}, &RefreshToken{},
+		&Role{}, &Permission{}, &RolePermission{}, &User{},
+		&Session{}, &Account{}, &Verification{},
 		&Story{}, &StoryView{}, &Comment{}, &CommentLike{}, &Like{},
 		&LiveRoom{}, &LiveRoomParticipant{}, &LiveMessage{},
 		&Stream{}, &StreamSession{}, &VODMedia{},

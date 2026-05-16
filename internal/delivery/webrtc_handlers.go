@@ -226,3 +226,21 @@ func (h *WebRTCHandler) GetLiveStreams(w http.ResponseWriter, r *http.Request) {
 	}
 	h.writeJSON(w, http.StatusOK, streams)
 }
+
+// GetStream handles fetching a single stream by ID
+func (h *WebRTCHandler) GetStream(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	streamID, err := domain.FromString(vars["stream_id"])
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "INVALID_STREAM_ID", "Invalid stream ID")
+		return
+	}
+
+	stream, err := h.streamUseCase.GetStreamByID(r.Context(), streamID)
+	if err != nil {
+		h.writeError(w, http.StatusNotFound, "STREAM_NOT_FOUND", "Stream not found")
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, stream)
+}

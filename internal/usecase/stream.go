@@ -9,6 +9,7 @@ import (
 
 	"nvide-live/internal/domain"
 	"nvide-live/pkg/broker"
+	"nvide-live/pkg/mux"
 	"nvide-live/pkg/redis"
 )
 
@@ -16,6 +17,7 @@ type StreamUseCase struct {
 	streamRepo    domain.StreamRepository
 	sessionRepo   domain.StreamSessionRepository
 	redisClient   *redis.Client
+	muxClient     *mux.Client
 	broker        broker.Broker
 	logger        *zap.Logger
 }
@@ -31,6 +33,7 @@ func NewStreamUseCase(
 		streamRepo:  streamRepo,
 		sessionRepo: sessionRepo,
 		redisClient: redisClient,
+		muxClient:   mux.NewClient(),
 		broker:      broker,
 		logger:      logger,
 	}
@@ -56,6 +59,19 @@ func (uc *StreamUseCase) CreateStream(ctx context.Context, hostID domain.UUID, t
 		ThumbnailURL: thumbnailURL,
 		Status:       domain.StreamStatusPreparing,
 		RoomID:       roomID,
+	}
+
+	// Integrate with Mux
+	muxStream, err := uc.muxClient.CreateLiveStream()
+	if err != nil {
+		uc.logger.Error("Failed to create Mux live stream", zap.Error(err))
+		// Fallback or error? Let's error since user wants Mux
+		return nil, err
+	}
+
+	stream.StreamKey = muxStream.Data.StreamKey
+	if len(muxStream.Data.PlaybackIDs) > 0 {
+		stream.PlaybackID = muxStream.Data.PlaybackIDs[0].ID
 	}
 
 	if err := uc.streamRepo.Create(ctx, stream); err != nil {
@@ -160,6 +176,27 @@ func (uc *StreamUseCase) GetLiveStreams(ctx context.Context, limit, offset int) 
 	}
 
 	return streams, nil
+}
+
+// GetStreamByID returns stream details by ID
+func (uc *StreamUseCase) GetStreamByID(ctx context.Context, streamID domain.UUID) (*domain.Stream, error) {
+	stream, err := uc.streamRepo.GetByID(ctx, streamID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Attach current viewer count
+	key := fmt.Sprintf("stream:viewer_count:%s", stream.RoomID.String())
+	countStr, _ := uc.redisClient.GetClient().Get(ctx, key).Result()
+	var count int
+	fmt.Sscanf(countStr, "%d", &count)
+	stream.Viewers = count
+	
+	if stream.PlaybackID != "" {
+		stream.MuxPlaybackURL = uc.muxClient.GetPlaybackURL(stream.PlaybackID)
+	}
+
+	return stream, nil
 }
 
 // JoinStream is called when a viewer joins the stream

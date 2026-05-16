@@ -126,7 +126,8 @@ func SetupRouter(
 	router.HandleFunc("/ws/call/{session_id}", handler.ServeCallWS).Methods("GET")
 
 	// WebRTC Signaling (WebSocket)
-	router.HandleFunc("/api/v1/ws/stream/{room_id}/signal", webrtcHandler.SignalWS).Methods("GET")
+	router.HandleFunc("/api/v1/streams/{room_id}/signal", webrtcHandler.SignalWS).Methods("GET")
+	router.HandleFunc("/api/v1/streams/{stream_id}", webrtcHandler.GetStream).Methods("GET")
 	
 	// Stream Management (Protected)
 	protected.HandleFunc("/streams", webrtcHandler.CreateStream).Methods("POST")

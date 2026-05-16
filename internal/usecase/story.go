@@ -44,7 +44,7 @@ func (uc *StoryUseCase) CreateStory(ctx context.Context, userID domain.UUID, req
 		UserID:    userID,
 		Content:   req.Content,
 		MediaType: req.MediaType,
-		ExpiresAt: time.Now().Add(24 * time.Hour), // 24 hours expiry
+		ExpiresAt: time.Now().Add(168 * time.Hour), // 1 week expiry
 	}
 
 	if err := uc.storyRepo.Create(ctx, story); err != nil {
