@@ -46,6 +46,7 @@ type VODMediaRepository interface {
 	Update(ctx context.Context, vod *VODMedia) error
 	GetByID(ctx context.Context, id UUID) (*VODMedia, error)
 	ListByUser(ctx context.Context, userID UUID, limit, offset int) ([]*VODMedia, error)
+	ListPublic(ctx context.Context, limit, offset int) ([]*VODMedia, error)
 	Delete(ctx context.Context, id UUID) error
 }
 
@@ -55,6 +56,7 @@ type VODUseCaseInterface interface {
 	UploadVideo(ctx context.Context, userID UUID, title, description, visibility, tempFilePath string, originalFileName string) (*VODMedia, error)
 	GetVODDetail(ctx context.Context, id UUID) (*VODMedia, error)
 	ListUserVODs(ctx context.Context, userID UUID, limit, offset int) ([]*VODMedia, error)
+	ListPublicVODs(ctx context.Context, limit, offset int) ([]*VODMedia, error)
 	UpdateVisibility(ctx context.Context, id UUID, userID UUID, visibility string) error
 	DeleteVOD(ctx context.Context, id UUID, userID UUID) error
 }

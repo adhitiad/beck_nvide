@@ -135,10 +135,10 @@ func SetupRouter(
 	
 	// Public Stream Routes
 	apiV1.HandleFunc("/streams/live", webrtcHandler.GetLiveStreams).Methods("GET")
+	apiV1.HandleFunc("/vods", vodHandler.GetVODList).Methods("GET")
 
 	// VOD Management
 	protected.HandleFunc("/vods", vodHandler.UploadVOD).Methods("POST")
-	apiV1.HandleFunc("/vods", vodHandler.GetVODList).Methods("GET")
 	apiV1.HandleFunc("/vods/{vod_id}", vodHandler.GetVODDetail).Methods("GET")
 	protected.HandleFunc("/vods/{vod_id}/visibility", vodHandler.UpdateVisibility).Methods("PUT")
 	protected.HandleFunc("/vods/{vod_id}", vodHandler.DeleteVOD).Methods("DELETE")

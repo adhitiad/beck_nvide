@@ -2,6 +2,8 @@ package middleware
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -91,10 +93,10 @@ func (m *AuthMiddleware) Middleware(next http.Handler) http.Handler {
 	})
 }
 
-// Helper: simple token hash
+// Helper: hash token for comparison with blacklist
 func hashToken(token string) string {
-	// In production, use SHA256
-	return token
+	hash := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(hash[:])
 }
 
 // context helpers

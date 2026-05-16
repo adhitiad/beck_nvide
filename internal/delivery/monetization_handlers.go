@@ -9,6 +9,7 @@ import (
 	"go.uber.org/zap"
 
 	"nvide-live/internal/domain"
+	"nvide-live/internal/middleware"
 	"nvide-live/internal/usecase"
 	"nvide-live/pkg/duitku"
 )
@@ -51,15 +52,7 @@ func (h *MonetizationHandler) writeError(w http.ResponseWriter, status int, code
 }
 
 func (h *MonetizationHandler) getUserID(r *http.Request) (domain.UUID, bool) {
-	v := r.Context().Value("user_id")
-	if v == nil {
-		return "", false
-	}
-	id, err := domain.FromString(v.(string))
-	if err != nil {
-		return "", false
-	}
-	return id, true
+	return middleware.GetUserIDFromContext(r.Context())
 }
 
 // ===== WALLET =====

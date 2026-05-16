@@ -12,6 +12,7 @@ import (
 	"go.uber.org/zap"
 
 	"nvide-live/internal/domain"
+	"nvide-live/internal/middleware"
 )
 
 type VODHandler struct {
@@ -41,12 +42,11 @@ func (h *VODHandler) writeError(w http.ResponseWriter, status int, code, message
 
 // UploadVOD handles multipart upload
 func (h *VODHandler) UploadVOD(w http.ResponseWriter, r *http.Request) {
-	userIDVal := r.Context().Value("user_id")
-	if userIDVal == nil {
+	userID, ok := middleware.GetUserIDFromContext(r.Context())
+	if !ok {
 		h.writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "User not authenticated")
 		return
 	}
-	userID, _ := domain.FromString(userIDVal.(string))
 
 	// 500 MB max
 	r.ParseMultipartForm(500 << 20)
@@ -94,16 +94,6 @@ func (h *VODHandler) UploadVOD(w http.ResponseWriter, r *http.Request) {
 
 func (h *VODHandler) GetVODList(w http.ResponseWriter, r *http.Request) {
 	userIDStr := r.URL.Query().Get("user_id")
-	if userIDStr == "" {
-		h.writeError(w, http.StatusBadRequest, "INVALID_USER_ID", "User ID is required")
-		return
-	}
-	userID, err := domain.FromString(userIDStr)
-	if err != nil {
-		h.writeError(w, http.StatusBadRequest, "INVALID_USER_ID", "Invalid User ID")
-		return
-	}
-
 	limit := 10
 	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
 		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
@@ -117,7 +107,21 @@ func (h *VODHandler) GetVODList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	vods, err := h.vodUseCase.ListUserVODs(r.Context(), userID, limit, offset)
+	var vods []*domain.VODMedia
+	var err error
+
+	if userIDStr != "" {
+		userID, err := domain.FromString(userIDStr)
+		if err != nil {
+			h.writeError(w, http.StatusBadRequest, "INVALID_USER_ID", "Invalid User ID")
+			return
+		}
+		vods, err = h.vodUseCase.ListUserVODs(r.Context(), userID, limit, offset)
+	} else {
+		// List all public VODs if no user_id provided
+		vods, err = h.vodUseCase.ListPublicVODs(r.Context(), limit, offset)
+	}
+
 	if err != nil {
 		h.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
@@ -148,12 +152,11 @@ type UpdateVisibilityRequest struct {
 }
 
 func (h *VODHandler) UpdateVisibility(w http.ResponseWriter, r *http.Request) {
-	userIDVal := r.Context().Value("user_id")
-	if userIDVal == nil {
+	userID, ok := middleware.GetUserIDFromContext(r.Context())
+	if !ok {
 		h.writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "User not authenticated")
 		return
 	}
-	userID, _ := domain.FromString(userIDVal.(string))
 
 	vars := mux.Vars(r)
 	vodID, err := domain.FromString(vars["vod_id"])
@@ -177,12 +180,11 @@ func (h *VODHandler) UpdateVisibility(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *VODHandler) DeleteVOD(w http.ResponseWriter, r *http.Request) {
-	userIDVal := r.Context().Value("user_id")
-	if userIDVal == nil {
+	userID, ok := middleware.GetUserIDFromContext(r.Context())
+	if !ok {
 		h.writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "User not authenticated")
 		return
 	}
-	userID, _ := domain.FromString(userIDVal.(string))
 
 	vars := mux.Vars(r)
 	vodID, err := domain.FromString(vars["vod_id"])

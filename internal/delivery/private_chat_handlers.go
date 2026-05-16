@@ -9,6 +9,7 @@ import (
 	gorillaws "github.com/gorilla/websocket"
 	"nvide-live/internal/domain"
 	"nvide-live/internal/websocket"
+	"nvide-live/internal/middleware"
 	"go.uber.org/zap"
 )
 
@@ -410,16 +411,8 @@ func (h *Handler) ServeChatWS(w http.ResponseWriter, r *http.Request) {
 	websocket.NewClient(h.wsHub, conn, roomID, claims.UserID)
 }
 
-// Helper to get user ID from context
+// Helper to get user ID from context correctly using middleware helper
 func (h *Handler) getUserID(r *http.Request) domain.UUID {
-	userIDVal := r.Context().Value("user_id")
-	if userIDVal == nil {
-		return ""
-	}
-	userIDStr, ok := userIDVal.(string)
-	if !ok {
-		return ""
-	}
-	id, _ := domain.FromString(userIDStr)
+	id, _ := middleware.GetUserIDFromContext(r.Context())
 	return id
 }

@@ -139,7 +139,7 @@ func (r *streamRepository) ListLive(ctx context.Context, limit, offset int) ([]*
 	}
 	defer rows.Close()
 
-	var streams []*domain.Stream
+	streams := make([]*domain.Stream, 0)
 	for rows.Next() {
 		var s domain.Stream
 		err := rows.Scan(

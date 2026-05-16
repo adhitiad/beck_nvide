@@ -102,53 +102,69 @@ type Like struct {
 	CreatedAt time.Time
 }
 
-type ChatRoom struct {
+type LiveRoom struct {
 	ID        string `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
 	Name      string `gorm:"type:varchar(100)"`
 	Type      string `gorm:"type:varchar(20);default:'group'"`
+	TargetID  string `gorm:"type:uuid"`
 	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
-type ChatRoomMember struct {
+func (LiveRoom) TableName() string {
+	return "live_rooms"
+}
+
+type LiveRoomParticipant struct {
 	ID       string `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
 	RoomID   string `gorm:"type:uuid;not null;index"`
 	UserID   string `gorm:"type:uuid;not null"`
 	JoinedAt time.Time
 }
 
-type Message struct {
+func (LiveRoomParticipant) TableName() string {
+	return "live_room_participants"
+}
+
+type LiveMessage struct {
 	ID        string `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
 	RoomID    string `gorm:"type:uuid;not null;index"`
 	UserID    string `gorm:"type:uuid;not null"`
 	Content   string `gorm:"type:text;not null"`
 	Type      string `gorm:"type:varchar(20);default:'text'"`
+	ReplyToID string `gorm:"type:uuid"`
 	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+func (LiveMessage) TableName() string {
+	return "live_messages"
 }
 
 type Stream struct {
-	ID          string `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	HostID      string `gorm:"type:uuid;not null;index"`
-	Title       string `gorm:"type:varchar(255);not null"`
-	Description string `gorm:"type:text"`
-	StreamKey   string `gorm:"type:varchar(255);unique"`
-	Status      string `gorm:"type:varchar(20);default:'idle'"`
-	ViewerCount int    `gorm:"default:0"`
-	StartedAt   *time.Time
-	EndedAt     *time.Time
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	ID            string `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	HostID        string `gorm:"type:uuid;not null;index"`
+	Title         string `gorm:"type:varchar(255);not null"`
+	Description   string `gorm:"type:text"`
+	ThumbnailURL  string `gorm:"type:varchar(255)"`
+	Status        string `gorm:"type:varchar(50);default:'preparing'"`
+	StartedAt     *time.Time
+	EndedAt       *time.Time
+	ViewerPeak    int `gorm:"default:0"`
+	TotalDuration int `gorm:"default:0"`
+	RoomID        string `gorm:"type:uuid;not null;unique"`
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 type StreamSession struct {
-	ID            string `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	StreamID      string `gorm:"type:uuid;not null;index"`
-	ViewerCount   int    `gorm:"default:0"`
-	PeakViewers   int    `gorm:"default:0"`
-	DurationSecs  int    `gorm:"default:0"`
-	GiftsReceived int    `gorm:"default:0"`
-	Revenue       float64
-	StartedAt     time.Time
-	EndedAt       *time.Time
+	ID        string `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	StreamID  string `gorm:"type:uuid;not null;index"`
+	ViewerID  string `gorm:"type:uuid;not null;index"`
+	JoinedAt  time.Time
+	LeftAt    *time.Time
+	Duration  int `gorm:"default:0"`
+	IPAddress string `gorm:"type:varchar(45)"`
 }
 
 type VODMedia struct {
@@ -156,15 +172,16 @@ type VODMedia struct {
 	UserID       string `gorm:"type:uuid;not null;index"`
 	Title        string `gorm:"type:varchar(255);not null"`
 	Description  string `gorm:"type:text"`
-	FilePath     string `gorm:"type:text;not null"`
-	ThumbnailURL string `gorm:"type:text"`
-	Duration     int
-	FileSize     int64
-	MimeType     string `gorm:"type:varchar(50)"`
-	Status       string `gorm:"type:varchar(20);default:'processing'"`
-	ViewCount    int    `gorm:"default:0"`
+	OriginalURL  string `gorm:"type:varchar(255);not null"`
+	HLSURL       string `gorm:"type:varchar(255)"`
+	ThumbnailURL string `gorm:"type:varchar(255)"`
+	Duration     int `gorm:"default:0"`
+	FileSize     int64 `gorm:"default:0"`
+	Status       string `gorm:"type:varchar(50);default:'processing'"`
+	Visibility   string `gorm:"type:varchar(50);default:'public'"`
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
+	DeletedAt    *time.Time
 }
 
 type Wallet struct {
@@ -190,24 +207,29 @@ type Transaction struct {
 }
 
 type Gift struct {
-	ID        string `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	Name      string `gorm:"type:varchar(100);not null"`
-	IconURL   string `gorm:"type:text"`
-	Price     int64  `gorm:"not null"`
-	Category  string `gorm:"type:varchar(50)"`
-	IsActive  bool   `gorm:"default:true"`
-	CreatedAt time.Time
+	ID           string `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	Name         string `gorm:"type:varchar(100);not null"`
+	IconURL      string `gorm:"type:text"`
+	Price        int64  `gorm:"not null"`
+	Currency     string `gorm:"type:varchar(10);default:'IDR'"`
+	AnimationURL string `gorm:"type:text"`
+	IsActive     bool   `gorm:"default:true"`
+	CreatedAt    time.Time
 }
 
 type GiftTransaction struct {
-	ID         string `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	GiftID     string `gorm:"type:uuid;not null"`
-	SenderID   string `gorm:"type:uuid;not null;index"`
-	ReceiverID string `gorm:"type:uuid;not null;index"`
-	StreamID   string `gorm:"type:uuid"`
-	Quantity   int    `gorm:"default:1"`
-	TotalPrice int64
-	CreatedAt  time.Time
+	ID               string `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	GiftID           string `gorm:"type:uuid;not null"`
+	SenderID         string `gorm:"type:uuid;not null;index"`
+	ReceiverID       string `gorm:"type:uuid;not null;index"`
+	StreamID         string `gorm:"type:uuid"`
+	AgencyID         string `gorm:"type:uuid"`
+	Quantity         int    `gorm:"default:1"`
+	TotalPrice       int64
+	AgencyCommission int64
+	HostEarning      int64
+	PlatformFee      int64
+	CreatedAt        time.Time
 }
 
 type Agency struct {
@@ -238,16 +260,15 @@ type HostApplication struct {
 
 type DuitkuPayment struct {
 	ID              string `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	UserID          string `gorm:"type:uuid;not null;index"`
+	TransactionID   string `gorm:"type:uuid;not null;index"`
 	MerchantOrderID string `gorm:"type:varchar(100);unique"`
-	Reference       string `gorm:"type:varchar(100)"`
-	Amount          int64
+	DuitkuReference string `gorm:"type:varchar(100)"`
+	PaymentURL      string `gorm:"type:text"`
+	VANumber        string `gorm:"type:varchar(50)"`
 	PaymentMethod   string `gorm:"type:varchar(50)"`
 	Status          string `gorm:"type:varchar(20);default:'pending'"`
-	PaymentURL      string `gorm:"type:text"`
-	CallbackData    string `gorm:"type:text"`
-	ExpiresAt       *time.Time
-	PaidAt          *time.Time
+	Amount          int64
+	ExpiryAt        *time.Time
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
 }
@@ -335,23 +356,108 @@ type BookingLocationLog struct {
 	RecordedAt time.Time
 }
 
-type PrivateChatConversation struct {
+type Conversation struct {
+	ID            string     `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	Type          string     `gorm:"type:varchar(20);default:'direct'"`
+	InitiatorID   string     `gorm:"type:uuid;not null;index"`
+	RecipientID   string     `gorm:"type:uuid;not null;index"`
+	LastMessageID *string    `gorm:"type:uuid"`
+	LastMessageAt *time.Time `gorm:"index"`
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+func (Conversation) TableName() string {
+	return "conversations"
+}
+
+type ConversationParticipant struct {
+	ID                string `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	ConversationID    string `gorm:"type:uuid;not null;index"`
+	UserID            string `gorm:"type:uuid;not null;index"`
+	UnreadCount       int    `gorm:"default:0"`
+	IsMuted           bool   `gorm:"default:false"`
+	IsArchived        bool   `gorm:"default:false"`
+	IsPinned          bool   `gorm:"default:false"`
+	IsDeleted         bool   `gorm:"default:false"`
+	LastReadMessageID *string `gorm:"type:uuid"`
+	JoinedAt          time.Time
+	UpdatedAt         time.Time
+}
+
+func (ConversationParticipant) TableName() string {
+	return "conversation_participants"
+}
+
+type PrivateMessage struct {
+	ID               string `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	ConversationID   string `gorm:"type:uuid;not null;index"`
+	SenderID         string `gorm:"type:uuid;not null"`
+	Type             string `gorm:"type:varchar(20);default:'text'"`
+	Content          *string `gorm:"type:text"`
+	Metadata         []byte `gorm:"type:jsonb"`
+	ReplyToMessageID *string `gorm:"type:uuid"`
+	IsEdited         bool   `gorm:"default:false"`
+	IsDeleted        bool   `gorm:"default:false"`
+	IsExpired        bool   `gorm:"default:false"`
+	DisappearMode    string `gorm:"type:varchar(20);default:'none'"`
+	DisappearAt      *time.Time
+	ViewedAt         *time.Time
+	IsScreenshot     bool `gorm:"default:false"`
+	IsForwarded      bool `gorm:"default:false"`
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+}
+
+func (PrivateMessage) TableName() string {
+	return "messages" 
+}
+
+type MessageReaction struct {
 	ID        string `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	User1ID   string `gorm:"type:uuid;not null;index"`
-	User2ID   string `gorm:"type:uuid;not null;index"`
-	Status    string `gorm:"type:varchar(20);default:'active'"`
+	MessageID string `gorm:"type:uuid;not null;index"`
+	UserID    string `gorm:"type:uuid;not null"`
+	Emoji     string `gorm:"type:varchar(50);not null"`
 	CreatedAt time.Time
+}
+
+func (MessageReaction) TableName() string {
+	return "message_reactions"
+}
+
+type MessageView struct {
+	ID        string `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	MessageID string `gorm:"type:uuid;not null;index"`
+	ViewerID  string `gorm:"type:uuid;not null"`
+	ViewedAt  time.Time
+}
+
+func (MessageView) TableName() string {
+	return "message_views"
+}
+
+type MessageStatus struct {
+	ID        string `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	MessageID string `gorm:"type:uuid;not null;index"`
+	UserID    string `gorm:"type:uuid;not null;index"`
+	Status    string `gorm:"type:varchar(20);not null"`
 	UpdatedAt time.Time
 }
 
-type PrivateChatMessage struct {
-	ID             string `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
-	ConversationID string `gorm:"type:uuid;not null;index"`
-	SenderID       string `gorm:"type:uuid;not null"`
-	Content        string `gorm:"type:text"`
-	MessageType    string `gorm:"type:varchar(20);default:'text'"`
-	IsRead         bool   `gorm:"default:false"`
-	CreatedAt      time.Time
+func (MessageStatus) TableName() string {
+	return "message_status"
+}
+
+type UserBlock struct {
+	ID        string `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	BlockerID string `gorm:"type:uuid;not null;index"`
+	BlockedID string `gorm:"type:uuid;not null;index"`
+	Reason    string `gorm:"type:text"`
+	CreatedAt time.Time
+}
+
+func (UserBlock) TableName() string {
+	return "user_blocks"
 }
 
 type MessageAttachment struct {
@@ -527,13 +633,14 @@ func RunAutoMigrate(dsn string) error {
 		&Role{}, &Permission{}, &RolePermission{},
 		&User{}, &RefreshToken{},
 		&Story{}, &StoryView{}, &Comment{}, &CommentLike{}, &Like{},
-		&ChatRoom{}, &ChatRoomMember{}, &Message{},
+		&LiveRoom{}, &LiveRoomParticipant{}, &LiveMessage{},
 		&Stream{}, &StreamSession{}, &VODMedia{},
 		&Wallet{}, &Transaction{}, &Gift{}, &GiftTransaction{},
 		&Agency{}, &HostApplication{}, &DuitkuPayment{},
 		&CryptoWallet{}, &CryptoMasterWallet{}, &CryptoDepositAddress{},
 		&CryptoTransaction{}, &CryptoExchangeRate{}, &CryptoWithdrawalWhitelist{},
-		&PrivateChatConversation{}, &PrivateChatMessage{}, &MessageAttachment{},
+		&Conversation{}, &ConversationParticipant{}, &PrivateMessage{},
+		&MessageReaction{}, &MessageView{}, &MessageStatus{}, &UserBlock{}, &MessageAttachment{},
 		&PaidCall{},
 		&HostSchedule{}, &HostScheduleException{}, &HostBookingType{},
 		&Booking{}, &Withdrawal{},

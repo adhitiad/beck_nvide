@@ -154,6 +154,10 @@ func (uc *VODUseCase) ListUserVODs(ctx context.Context, userID domain.UUID, limi
 	return uc.vodRepo.ListByUser(ctx, userID, limit, offset)
 }
 
+func (uc *VODUseCase) ListPublicVODs(ctx context.Context, limit, offset int) ([]*domain.VODMedia, error) {
+	return uc.vodRepo.ListPublic(ctx, limit, offset)
+}
+
 func (uc *VODUseCase) UpdateVisibility(ctx context.Context, id domain.UUID, userID domain.UUID, visibility string) error {
 	vod, err := uc.vodRepo.GetByID(ctx, id)
 	if err != nil {

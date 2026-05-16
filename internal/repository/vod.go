@@ -106,7 +106,36 @@ func (r *vodMediaRepository) ListByUser(ctx context.Context, userID domain.UUID,
 	}
 	defer rows.Close()
 
-	var vods []*domain.VODMedia
+	vods := make([]*domain.VODMedia, 0)
+	for rows.Next() {
+		var v domain.VODMedia
+		err := rows.Scan(
+			&v.ID, &v.UserID, &v.Title, &v.Description, &v.OriginalURL, &v.HLSURL, &v.ThumbnailURL,
+			&v.Duration, &v.FileSize, &v.Status, &v.Visibility, &v.CreatedAt, &v.UpdatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+		vods = append(vods, &v)
+	}
+	return vods, nil
+}
+
+func (r *vodMediaRepository) ListPublic(ctx context.Context, limit, offset int) ([]*domain.VODMedia, error) {
+	query := `
+		SELECT id, user_id, title, description, original_url, hls_url, thumbnail_url, duration, file_size, status, visibility, created_at, updated_at
+		FROM vod_media
+		WHERE visibility = 'public' AND status = 'ready' AND deleted_at IS NULL
+		ORDER BY created_at DESC
+		LIMIT $1 OFFSET $2
+	`
+	rows, err := r.db.Query(ctx, query, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	vods := make([]*domain.VODMedia, 0)
 	for rows.Next() {
 		var v domain.VODMedia
 		err := rows.Scan(
