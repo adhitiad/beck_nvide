@@ -18,6 +18,10 @@ type User struct {
 	ResetToken        *string    `json:"-" db:"reset_token"`
 	ResetTokenExpires *time.Time `json:"-" db:"reset_token_expires_at"`
 	LastLoginAt       *time.Time `json:"last_login_at,omitempty" db:"last_login_at"`
+	UserXP            int64      `json:"user_xp" db:"user_xp"`
+	UserLevel         int        `json:"user_level" db:"user_level"`
+	HostXP            int64      `json:"host_xp" db:"host_xp"`
+	HostLevel         int        `json:"host_level" db:"host_level"`
 	CreatedAt         time.Time  `json:"created_at" db:"created_at"`
 	UpdatedAt         time.Time  `json:"updated_at" db:"updated_at"`
 

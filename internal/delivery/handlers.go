@@ -30,6 +30,8 @@ type Handler struct {
 	bookingUseCase domain.BookingUsecase
 	offerUseCase   domain.OfferUsecase
 	locationUseCase domain.LocationUsecase
+	liveScheduleUseCase domain.LiveScheduleUseCase
+	waitRoomHub    *websocket.WaitRoomHub
 	wsHub          *websocket.Hub
 	logger         *zap.Logger
 }
@@ -47,6 +49,8 @@ func NewHandler(
 	bookingUseCase domain.BookingUsecase,
 	offerUseCase domain.OfferUsecase,
 	locationUseCase domain.LocationUsecase,
+	liveScheduleUseCase domain.LiveScheduleUseCase,
+	waitRoomHub *websocket.WaitRoomHub,
 	wsHub *websocket.Hub,
 	logger *zap.Logger,
 ) *Handler {
@@ -62,6 +66,8 @@ func NewHandler(
 		bookingUseCase:         bookingUseCase,
 		offerUseCase:           offerUseCase,
 		locationUseCase:        locationUseCase,
+		liveScheduleUseCase:    liveScheduleUseCase,
+		waitRoomHub:            waitRoomHub,
 		wsHub:                  wsHub,
 		logger:                 logger,
 	}

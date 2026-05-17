@@ -1,8 +1,11 @@
 package middleware
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
+	"net"
 	"net/http"
 	"time"
 
@@ -124,6 +127,14 @@ type responseWriter struct {
 func (rw *responseWriter) WriteHeader(code int) {
 	rw.statusCode = code
 	rw.ResponseWriter.WriteHeader(code)
+}
+
+func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := rw.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, errors.New("ResponseWriter does not implement http.Hijacker")
+	}
+	return hijacker.Hijack()
 }
 
 func writeJSONErrorResponse(w http.ResponseWriter, status int, code, message string) {

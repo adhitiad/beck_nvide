@@ -29,6 +29,28 @@ type Stream struct {
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 
+	// Bigo/Mango Room Config & Modes
+	RoomMode            string  `json:"room_mode"`
+	RoomPasswordHash   string  `json:"-"`
+	EntryFeeIDR        float64 `json:"entry_fee_idr"`
+	MinLevelToEnter    int     `json:"min_level_to_enter"`
+	Category           string  `json:"category"`
+	Tags               string  `json:"tags"`
+	MaxResolution      string  `json:"max_resolution"`
+	IsScreenShare      bool    `json:"is_screen_share"`
+	IsCoHostEnabled    bool    `json:"is_co_host_enabled"`
+	MaxCoHosts         int     `json:"max_co_hosts"`
+	ViewerCount        int     `json:"viewer_count"`
+	TotalGiftValueIDR  float64 `json:"total_gift_value_idr"`
+	LikeCount          int     `json:"like_count"`
+	ShareCount         int     `json:"share_count"`
+	CurrentPKID        *UUID   `json:"current_pk_id,omitempty"`
+	IsPKEligible       bool    `json:"is_pk_eligible"`
+	ChatMode           string  `json:"chat_mode"`
+	ChatSlowModeSeconds int    `json:"chat_slow_mode_seconds"`
+	CountryCode        string  `json:"country_code"`
+	Language           string  `json:"language"`
+
 	// Mux Fields
 	StreamKey    string `json:"stream_key,omitempty"`    // For RTMP push
 	PlaybackID   string `json:"playback_id,omitempty"`   // For HLS playback
@@ -40,6 +62,26 @@ type Stream struct {
 
 	// Relations
 	Host *User `json:"host,omitempty"`
+}
+
+type CreateStreamInput struct {
+	Title               string
+	Description         string
+	ThumbnailURL        string
+	RoomMode            string
+	RoomPassword        string
+	EntryFeeIDR         float64
+	MinLevelToEnter     int
+	Category            string
+	Tags                string
+	MaxResolution       string
+	IsScreenShare       bool
+	IsCoHostEnabled     bool
+	MaxCoHosts          int
+	ChatMode            string
+	ChatSlowModeSeconds int
+	CountryCode         string
+	Language            string
 }
 
 // StreamSession represents a viewer's session in a stream

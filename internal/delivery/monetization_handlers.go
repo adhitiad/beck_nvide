@@ -106,10 +106,11 @@ func (h *MonetizationHandler) GetGiftCatalog(w http.ResponseWriter, r *http.Requ
 }
 
 type SendGiftRequest struct {
-	ReceiverID string `json:"receiver_id"`
-	StreamID   string `json:"stream_id"`
-	GiftID     string `json:"gift_id"`
-	Quantity   int    `json:"quantity"`
+	ReceiverID     string `json:"receiver_id"`
+	RoomID         string `json:"room_id"`         // Untuk Stream Chat
+	ConversationID string `json:"conversation_id"` // Untuk Private Chat
+	GiftID         string `json:"gift_id"`
+	Quantity       int    `json:"quantity"`
 }
 
 func (h *MonetizationHandler) SendGift(w http.ResponseWriter, r *http.Request) {
@@ -139,15 +140,32 @@ func (h *MonetizationHandler) SendGift(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var streamID *domain.UUID
-	if req.StreamID != "" {
-		sid, err := domain.FromString(req.StreamID)
+	// Case 1: Private Chat Gift
+	if req.ConversationID != "" {
+		convID, err := domain.FromString(req.ConversationID)
+		if err != nil {
+			h.writeError(w, http.StatusBadRequest, "INVALID_CONVERSATION", "Invalid conversation ID")
+			return
+		}
+		gtx, err := h.giftUC.SendPrivateGift(r.Context(), senderID, convID, giftID, req.Quantity)
+		if err != nil {
+			h.writeError(w, http.StatusBadRequest, "GIFT_ERROR", err.Error())
+			return
+		}
+		h.writeJSON(w, http.StatusOK, gtx)
+		return
+	}
+
+	// Case 2: Live Stream Gift (Room Chat)
+	var roomID *domain.UUID
+	if req.RoomID != "" {
+		rid, err := domain.FromString(req.RoomID)
 		if err == nil {
-			streamID = &sid
+			roomID = &rid
 		}
 	}
 
-	gtx, err := h.giftUC.SendGift(r.Context(), senderID, receiverID, streamID, giftID, req.Quantity)
+	gtx, err := h.giftUC.SendGift(r.Context(), senderID, receiverID, roomID, giftID, req.Quantity)
 	if err != nil {
 		h.writeError(w, http.StatusBadRequest, "GIFT_ERROR", err.Error())
 		return

@@ -17,6 +17,7 @@ const (
 	JobStreamArchive     JobType = "stream_archive"
 	JobDailyReport      JobType = "daily_report"
 	JobNotificationBatch JobType = "notification_batch"
+	JobXPBatchUpdate     JobType = "xp_batch_update"
 )
 
 // Job represents a background task

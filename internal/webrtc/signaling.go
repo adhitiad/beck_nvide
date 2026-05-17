@@ -38,14 +38,23 @@ type Room struct {
 // RoomManager manages WebRTC rooms and peers
 type RoomManager struct {
 	rooms  map[string]*Room
+	api    *webrtc.API
 	logger *zap.Logger
 	mu     sync.RWMutex
 }
 
 // NewRoomManager creates a new room manager
 func NewRoomManager(logger *zap.Logger) *RoomManager {
+	m := &webrtc.MediaEngine{}
+	if err := m.RegisterDefaultCodecs(); err != nil {
+		logger.Error("Failed to register default codecs", zap.Error(err))
+	}
+
+	api := webrtc.NewAPI(webrtc.WithMediaEngine(m))
+
 	return &RoomManager{
 		rooms:  make(map[string]*Room),
+		api:    api,
 		logger: logger,
 	}
 }
@@ -98,7 +107,7 @@ func (m *RoomManager) HandleHostConnection(roomID, peerID string, sendChan chan 
 		room.Host.Connection.Close()
 	}
 
-	peerConnection, err := webrtc.NewPeerConnection(webrtc.Configuration{
+	peerConnection, err := m.api.NewPeerConnection(webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
 			{
 				URLs: []string{"stun:stun.l.google.com:19302"},
@@ -131,11 +140,21 @@ func (m *RoomManager) HandleHostConnection(roomID, peerID string, sendChan chan 
 
 		room.mu.Lock()
 		room.Tracks[kind] = trackLocal
-		// Automatically add this new track to existing viewers
+		// Automatically add this new track to existing viewers and notify them to renegotiate
 		for _, viewer := range room.Viewers {
 			if viewer.Connection != nil {
 				if _, err := viewer.Connection.AddTrack(trackLocal); err != nil {
 					m.logger.Error("Failed to add new track to existing viewer", zap.Error(err), zap.String("peer_id", viewer.ID))
+				} else {
+					// Notify viewer to renegotiate so their browser catches the new tracks
+					select {
+					case viewer.SignalSendChan <- SignalingMessage{
+						Type:   "renegotiate",
+						PeerID: "server",
+					}:
+					default:
+						m.logger.Warn("Failed to send renegotiate message to viewer, channel full", zap.String("peer_id", viewer.ID))
+					}
 				}
 			}
 		}
@@ -180,7 +199,7 @@ func (m *RoomManager) HandleHostConnection(roomID, peerID string, sendChan chan 
 func (m *RoomManager) HandleViewerConnection(roomID, peerID string, sendChan chan SignalingMessage) (*PeerState, error) {
 	room := m.GetOrCreateRoom(roomID)
 
-	peerConnection, err := webrtc.NewPeerConnection(webrtc.Configuration{
+	peerConnection, err := m.api.NewPeerConnection(webrtc.Configuration{
 		ICEServers: []webrtc.ICEServer{
 			{
 				URLs: []string{"stun:stun.l.google.com:19302"},

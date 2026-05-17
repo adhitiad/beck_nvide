@@ -21,6 +21,10 @@ func TestTokenBucketLimiter(t *testing.T) {
 	})
 	
 	limiter := NewTokenBucketLimiter(rdb)
+	mockedTime := time.Now()
+	limiter.timeNow = func() time.Time {
+		return mockedTime
+	}
 	ctx := context.Background()
 	key := "test_key"
 	
@@ -50,6 +54,7 @@ func TestTokenBucketLimiter(t *testing.T) {
 	
 	// Fast-forward time
 	s.FastForward(2 * time.Second)
+	mockedTime = mockedTime.Add(2 * time.Second)
 	
 	// Should allow 2 more requests
 	allowed, _, _ = limiter.Allow(ctx, key, 1, 5, 1)

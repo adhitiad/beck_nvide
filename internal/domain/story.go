@@ -42,6 +42,7 @@ type StoryRepository interface {
 	GetFeedStories(ctx context.Context, userIDs []UUID, limit int) ([]*Story, error)
 	Update(ctx context.Context, story *Story) error
 	Delete(ctx context.Context, id UUID) error
+	DeleteExpired(ctx context.Context) error
 	IncrementViewCount(ctx context.Context, id UUID) error
 	CountByUser(ctx context.Context, userID UUID) (int, error)
 }

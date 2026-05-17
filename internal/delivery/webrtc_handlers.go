@@ -16,18 +16,29 @@ import (
 )
 
 type WebRTCHandler struct {
-	roomManager  *webrtcManager.RoomManager
-	streamUseCase *usecase.StreamUseCase
-	authUseCase   *usecase.AuthUseCase
-	logger        *zap.Logger
+	roomManager     *webrtcManager.RoomManager
+	streamUseCase   *usecase.StreamUseCase
+	authUseCase     *usecase.AuthUseCase
+	trendingUseCase *usecase.TrendingUseCase
+	scheduleUseCase domain.LiveScheduleUseCase
+	logger          *zap.Logger
 }
 
-func NewWebRTCHandler(roomManager *webrtcManager.RoomManager, streamUseCase *usecase.StreamUseCase, authUseCase *usecase.AuthUseCase, logger *zap.Logger) *WebRTCHandler {
+func NewWebRTCHandler(
+	roomManager *webrtcManager.RoomManager,
+	streamUseCase *usecase.StreamUseCase,
+	authUseCase *usecase.AuthUseCase,
+	trendingUseCase *usecase.TrendingUseCase,
+	scheduleUseCase domain.LiveScheduleUseCase,
+	logger *zap.Logger,
+) *WebRTCHandler {
 	return &WebRTCHandler{
-		roomManager:   roomManager,
-		streamUseCase: streamUseCase,
-		authUseCase:   authUseCase,
-		logger:        logger,
+		roomManager:     roomManager,
+		streamUseCase:   streamUseCase,
+		authUseCase:     authUseCase,
+		trendingUseCase: trendingUseCase,
+		scheduleUseCase: scheduleUseCase,
+		logger:          logger,
 	}
 }
 
@@ -83,16 +94,24 @@ func (h *WebRTCHandler) SignalWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Setup unique peer ID based on user ID and role to avoid conflicts in local same-browser testing
+	roleStr := "viewer"
+	if isHost {
+		roleStr = "host"
+	}
+	peerIDStr := userIDStr + "_" + roleStr
+
 	// Setup peer
 	sendChan := make(chan webrtcManager.SignalingMessage, 256)
 	if isHost {
-		_, err = h.roomManager.HandleHostConnection(roomIDStr, userIDStr, sendChan)
+		_, err = h.roomManager.HandleHostConnection(roomIDStr, peerIDStr, sendChan)
 	} else {
 		// Join stream
 		ip := strings.Split(r.RemoteAddr, ":")[0]
-		err = h.streamUseCase.JoinStream(r.Context(), roomID, userID, ip)
+		password := r.URL.Query().Get("password")
+		err = h.streamUseCase.JoinStream(r.Context(), roomID, userID, ip, password)
 		if err == nil {
-			_, err = h.roomManager.HandleViewerConnection(roomIDStr, userIDStr, sendChan)
+			_, err = h.roomManager.HandleViewerConnection(roomIDStr, peerIDStr, sendChan)
 		}
 	}
 
@@ -114,7 +133,7 @@ func (h *WebRTCHandler) SignalWS(w http.ResponseWriter, r *http.Request) {
 
 	// Read loop
 	defer func() {
-		h.roomManager.RemovePeer(roomIDStr, userIDStr)
+		h.roomManager.RemovePeer(roomIDStr, peerIDStr)
 		if !isHost {
 			h.streamUseCase.LeaveStream(r.Context(), roomID, userID)
 		}
@@ -132,7 +151,7 @@ func (h *WebRTCHandler) SignalWS(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Process signaling
-		if err := h.roomManager.ProcessSignaling(roomIDStr, userIDStr, msg); err != nil {
+		if err := h.roomManager.ProcessSignaling(roomIDStr, peerIDStr, msg); err != nil {
 			h.logger.Error("Failed to process signaling", zap.Error(err))
 		}
 	}
@@ -154,9 +173,23 @@ func (h *WebRTCHandler) writeError(w http.ResponseWriter, status int, code, mess
 
 // CreateStreamRequest represents stream creation payload
 type CreateStreamRequest struct {
-	Title        string `json:"title"`
-	Description  string `json:"description"`
-	ThumbnailURL string `json:"thumbnail_url"`
+	Title               string   `json:"title"`
+	Description         string   `json:"description"`
+	ThumbnailURL        string   `json:"thumbnail_url"`
+	RoomMode            string   `json:"room_mode"`
+	RoomPassword        string   `json:"room_password"`
+	EntryFeeIDR         float64  `json:"entry_fee_idr"`
+	MinLevelToEnter     int      `json:"min_level_to_enter"`
+	Category            string   `json:"category"`
+	Tags                string   `json:"tags"`
+	MaxResolution       string   `json:"max_resolution"`
+	IsScreenShare       bool     `json:"is_screen_share"`
+	IsCoHostEnabled     bool     `json:"is_co_host_enabled"`
+	MaxCoHosts          int      `json:"max_co_hosts"`
+	ChatMode            string   `json:"chat_mode"`
+	ChatSlowModeSeconds int      `json:"chat_slow_mode_seconds"`
+	CountryCode         string   `json:"country_code"`
+	Language            string   `json:"language"`
 }
 
 // CreateStream handles stream creation
@@ -174,13 +207,69 @@ func (h *WebRTCHandler) CreateStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	stream, err := h.streamUseCase.CreateStream(r.Context(), userID, req.Title, req.Description, req.ThumbnailURL)
+	input := domain.CreateStreamInput{
+		Title:               req.Title,
+		Description:         req.Description,
+		ThumbnailURL:        req.ThumbnailURL,
+		RoomMode:            req.RoomMode,
+		RoomPassword:        req.RoomPassword,
+		EntryFeeIDR:         req.EntryFeeIDR,
+		MinLevelToEnter:     req.MinLevelToEnter,
+		Category:            req.Category,
+		Tags:                req.Tags,
+		MaxResolution:       req.MaxResolution,
+		IsScreenShare:       req.IsScreenShare,
+		IsCoHostEnabled:     req.IsCoHostEnabled,
+		MaxCoHosts:          req.MaxCoHosts,
+		ChatMode:            req.ChatMode,
+		ChatSlowModeSeconds: req.ChatSlowModeSeconds,
+		CountryCode:         req.CountryCode,
+		Language:            req.Language,
+	}
+
+	stream, err := h.streamUseCase.CreateStream(r.Context(), userID, input)
 	if err != nil {
 		h.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
 
 	h.writeJSON(w, http.StatusCreated, stream)
+}
+
+// SwitchRoomModeRequest represents request payload to change stream room mode
+type SwitchRoomModeRequest struct {
+	RoomMode     string  `json:"room_mode"`
+	RoomPassword string  `json:"room_password"`
+	EntryFeeIDR  float64 `json:"entry_fee_idr"`
+}
+
+// SwitchRoomMode handles switching room mode
+func (h *WebRTCHandler) SwitchRoomMode(w http.ResponseWriter, r *http.Request) {
+	userID, ok := middleware.GetUserIDFromContext(r.Context())
+	if !ok {
+		h.writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "User not authenticated")
+		return
+	}
+
+	vars := mux.Vars(r)
+	streamID, err := domain.FromString(vars["stream_id"])
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "INVALID_STREAM_ID", "Invalid stream ID")
+		return
+	}
+
+	var req SwitchRoomModeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request body")
+		return
+	}
+
+	if err := h.streamUseCase.SwitchRoomMode(r.Context(), userID, streamID, req.RoomMode, req.RoomPassword, req.EntryFeeIDR); err != nil {
+		h.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]string{"message": "Room mode updated successfully"})
 }
 
 // StartStream handles starting a stream
@@ -197,7 +286,18 @@ func (h *WebRTCHandler) StartStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.writeJSON(w, http.StatusOK, map[string]string{"message": "Stream started"})
+	stream, err := h.streamUseCase.GetStreamByID(r.Context(), streamID)
+	if err != nil {
+		h.writeJSON(w, http.StatusOK, map[string]string{"message": "Stream started"})
+		return
+	}
+
+	// Automatically check and link schedule occurrence (Fitur 7)
+	if h.scheduleUseCase != nil {
+		_, _ = h.scheduleUseCase.CheckAndAutoLinkStream(r.Context(), stream.HostID, stream.ID)
+	}
+
+	h.writeJSON(w, http.StatusOK, stream)
 }
 
 // EndStream handles ending a stream
@@ -243,4 +343,14 @@ func (h *WebRTCHandler) GetStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.writeJSON(w, http.StatusOK, stream)
+}
+
+// GetTrendingStreams lists all live streams ordered by trending score (Fase 6)
+func (h *WebRTCHandler) GetTrendingStreams(w http.ResponseWriter, r *http.Request) {
+	streams, err := h.trendingUseCase.GetTrendingStreams(r.Context(), 10)
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	h.writeJSON(w, http.StatusOK, streams)
 }

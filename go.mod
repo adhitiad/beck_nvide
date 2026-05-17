@@ -64,6 +64,7 @@ require (
 	github.com/pion/turn/v5 v5.0.4 // indirect
 	github.com/shirou/gopsutil v3.21.11+incompatible // indirect
 	github.com/supranational/blst v0.3.16 // indirect
+	github.com/teambition/rrule-go v1.8.2 // indirect
 	github.com/tklauser/go-sysconf v0.4.0 // indirect
 	github.com/tklauser/numcpus v0.12.0 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect

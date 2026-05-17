@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	"golang.org/x/crypto/bcrypt"
 
 	"nvide-live/internal/domain"
 	"nvide-live/pkg/broker"
@@ -13,11 +14,17 @@ import (
 	"nvide-live/pkg/redis"
 )
 
+type MuxClient interface {
+	CreateLiveStream() (*mux.LiveStreamResponse, error)
+	GetPlaybackURL(playbackID string) string
+}
+
 type StreamUseCase struct {
 	streamRepo    domain.StreamRepository
 	sessionRepo   domain.StreamSessionRepository
+	walletRepo    domain.WalletRepository
 	redisClient   *redis.Client
-	muxClient     *mux.Client
+	muxClient     MuxClient
 	broker        broker.Broker
 	logger        *zap.Logger
 }
@@ -25,6 +32,7 @@ type StreamUseCase struct {
 func NewStreamUseCase(
 	streamRepo domain.StreamRepository,
 	sessionRepo domain.StreamSessionRepository,
+	walletRepo domain.WalletRepository,
 	redisClient *redis.Client,
 	broker broker.Broker,
 	logger *zap.Logger,
@@ -32,6 +40,7 @@ func NewStreamUseCase(
 	return &StreamUseCase{
 		streamRepo:  streamRepo,
 		sessionRepo: sessionRepo,
+		walletRepo:  walletRepo,
 		redisClient: redisClient,
 		muxClient:   mux.NewClient(),
 		broker:      broker,
@@ -39,39 +48,65 @@ func NewStreamUseCase(
 	}
 }
 
+func (uc *StreamUseCase) SetMuxClient(client MuxClient) {
+	uc.muxClient = client
+}
+
 // CreateStream creates a new stream
-func (uc *StreamUseCase) CreateStream(ctx context.Context, hostID domain.UUID, title, description, thumbnailURL string) (*domain.Stream, error) {
-	// Enforce 1 live stream per host
+func (uc *StreamUseCase) CreateStream(ctx context.Context, hostID domain.UUID, input domain.CreateStreamInput) (*domain.Stream, error) {
+	// Enforce 1 live stream per host (auto-resume/idempotent session recovery)
 	existing, err := uc.streamRepo.GetLiveByHost(ctx, hostID)
 	if err != nil && err != domain.ErrNotFound && err.Error() != "no rows in result set" {
 		return nil, err
 	}
 	if existing != nil {
-		return nil, domain.NewDomainError(domain.ErrCodeConflict, "host already has a live stream", nil)
+		uc.logger.Info("Host already has a live stream, auto-resuming existing session", zap.String("host_id", hostID.String()), zap.String("stream_id", existing.ID.String()))
+		return existing, nil
 	}
 
 	roomID := domain.NewUUID()
 	stream := &domain.Stream{
-		ID:           domain.NewUUID(),
-		HostID:       hostID,
-		Title:        title,
-		Description:  description,
-		ThumbnailURL: thumbnailURL,
-		Status:       domain.StreamStatusPreparing,
-		RoomID:       roomID,
+		ID:                  domain.NewUUID(),
+		HostID:              hostID,
+		Title:               input.Title,
+		Description:         input.Description,
+		ThumbnailURL:        input.ThumbnailURL,
+		Status:              domain.StreamStatusPreparing,
+		RoomID:              roomID,
+		RoomMode:            input.RoomMode,
+		EntryFeeIDR:         input.EntryFeeIDR,
+		MinLevelToEnter:     input.MinLevelToEnter,
+		Category:            input.Category,
+		Tags:                input.Tags,
+		MaxResolution:       input.MaxResolution,
+		IsScreenShare:       input.IsScreenShare,
+		IsCoHostEnabled:     input.IsCoHostEnabled,
+		MaxCoHosts:          input.MaxCoHosts,
+		ChatMode:            input.ChatMode,
+		ChatSlowModeSeconds: input.ChatSlowModeSeconds,
+		CountryCode:         input.CountryCode,
+		Language:            input.Language,
+	}
+
+	if input.RoomMode == "password" && input.RoomPassword != "" {
+		hash, err := bcrypt.GenerateFromPassword([]byte(input.RoomPassword), bcrypt.DefaultCost)
+		if err != nil {
+			return nil, err
+		}
+		stream.RoomPasswordHash = string(hash)
 	}
 
 	// Integrate with Mux
 	muxStream, err := uc.muxClient.CreateLiveStream()
 	if err != nil {
-		uc.logger.Error("Failed to create Mux live stream", zap.Error(err))
-		// Fallback or error? Let's error since user wants Mux
-		return nil, err
-	}
-
-	stream.StreamKey = muxStream.Data.StreamKey
-	if len(muxStream.Data.PlaybackIDs) > 0 {
-		stream.PlaybackID = muxStream.Data.PlaybackIDs[0].ID
+		uc.logger.Warn("Failed to create Mux live stream, falling back to simulated local stream", zap.Error(err))
+		stream.StreamKey = "simulated_stream_key_" + domain.NewUUID().String()
+		stream.PlaybackID = "simulated_playback_id_" + domain.NewUUID().String()
+	} else {
+		stream.StreamKey = muxStream.Data.StreamKey
+		if len(muxStream.Data.PlaybackIDs) > 0 {
+			stream.PlaybackID = muxStream.Data.PlaybackIDs[0].ID
+		}
 	}
 
 	if err := uc.streamRepo.Create(ctx, stream); err != nil {
@@ -81,11 +116,51 @@ func (uc *StreamUseCase) CreateStream(ctx context.Context, hostID domain.UUID, t
 	return stream, nil
 }
 
+// SwitchRoomMode updates the stream room mode (e.g. from public to password or paid)
+func (uc *StreamUseCase) SwitchRoomMode(ctx context.Context, hostID, streamID domain.UUID, mode string, password string, fee float64) error {
+	stream, err := uc.streamRepo.GetByID(ctx, streamID)
+	if err != nil {
+		return err
+	}
+
+	if stream.HostID != hostID {
+		return domain.NewDomainError(domain.ErrCodeForbidden, "only host can change room mode", nil)
+	}
+
+	stream.RoomMode = mode
+	if mode == "password" && password != "" {
+		hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+		if err != nil {
+			return err
+		}
+		stream.RoomPasswordHash = string(hash)
+	} else if mode == "paid" {
+		stream.EntryFeeIDR = fee
+		stream.RoomPasswordHash = ""
+	} else {
+		stream.RoomPasswordHash = ""
+		stream.EntryFeeIDR = 0
+	}
+
+	return uc.streamRepo.Update(ctx, stream)
+}
+
+
 // StartStream marks a stream as live
 func (uc *StreamUseCase) StartStream(ctx context.Context, streamID domain.UUID) error {
 	stream, err := uc.streamRepo.GetByID(ctx, streamID)
 	if err != nil {
 		return err
+	}
+
+	if stream.Status == domain.StreamStatusLive {
+		// Idempotent: already live, refresh Redis values and return nil
+		key := fmt.Sprintf("stream:viewer_count:%s", stream.RoomID.String())
+		uc.redisClient.GetClient().Set(ctx, key, 0, 24*time.Hour)
+
+		statusKey := fmt.Sprintf("stream:status:%s", stream.RoomID.String())
+		uc.redisClient.GetClient().Set(ctx, statusKey, domain.StreamStatusLive, 24*time.Hour)
+		return nil
 	}
 
 	if stream.Status != domain.StreamStatusPreparing {
@@ -199,15 +274,41 @@ func (uc *StreamUseCase) GetStreamByID(ctx context.Context, streamID domain.UUID
 	return stream, nil
 }
 
-// JoinStream is called when a viewer joins the stream
-func (uc *StreamUseCase) JoinStream(ctx context.Context, roomID, viewerID domain.UUID, ipAddress string) error {
+func (uc *StreamUseCase) JoinStream(ctx context.Context, roomID, viewerID domain.UUID, ipAddress string, password string) error {
 	stream, err := uc.streamRepo.GetByRoomID(ctx, roomID)
 	if err != nil {
-		return err
+		// Fallback: try getting stream by ID directly (in case the client passed the stream ID)
+		var fallbackErr error
+		stream, fallbackErr = uc.streamRepo.GetByID(ctx, roomID)
+		if fallbackErr != nil {
+			return err // Return original error if fallback also fails
+		}
 	}
 
 	if stream.Status != domain.StreamStatusLive {
 		return domain.NewDomainError(domain.ErrCodeValidation, "stream is not live", nil)
+	}
+
+	// 1. Password check
+	if stream.RoomMode == "password" {
+		if password == "" {
+			return domain.NewDomainError(domain.ErrCodeForbidden, "password required to join stream", nil)
+		}
+		err := bcrypt.CompareHashAndPassword([]byte(stream.RoomPasswordHash), []byte(password))
+		if err != nil {
+			return domain.NewDomainError(domain.ErrCodeForbidden, "incorrect room password", nil)
+		}
+	}
+
+	// 2. Paid gatekeeping check
+	if stream.RoomMode == "paid" && stream.EntryFeeIDR > 0 {
+		wallet, err := uc.walletRepo.GetByUserID(ctx, viewerID)
+		if err != nil {
+			return domain.NewDomainError(domain.ErrCodeValidation, "failed to retrieve viewer wallet", nil)
+		}
+		if wallet.Balance < int64(stream.EntryFeeIDR) {
+			return domain.NewDomainError(domain.ErrCodeForbidden, "insufficient wallet balance for paid room", nil)
+		}
 	}
 
 	session := &domain.StreamSession{

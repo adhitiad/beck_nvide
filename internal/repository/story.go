@@ -169,6 +169,16 @@ func (r *storyRepository) Delete(ctx context.Context, id domain.UUID) error {
 	return err
 }
 
+func (r *storyRepository) DeleteExpired(ctx context.Context) error {
+	query := `DELETE FROM stories WHERE expires_at < NOW()`
+	_, err := r.db.Exec(ctx, query)
+	if err != nil {
+		r.logger.Error("Failed to delete expired stories", zap.Error(err))
+		return err
+	}
+	return nil
+}
+
 func (r *storyRepository) IncrementViewCount(ctx context.Context, id domain.UUID) error {
 	query := `UPDATE stories SET view_count = view_count + 1 WHERE id = $1`
 	_, err := r.db.Exec(ctx, query, id)

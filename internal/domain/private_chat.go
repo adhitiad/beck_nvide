@@ -179,6 +179,7 @@ type PrivateChatUsecase interface {
 	GetConversations(ctx context.Context, userID UUID, cursorTime *time.Time, cursorID *UUID, limit int) ([]*Conversation, error)
 	SendMessage(ctx context.Context, senderID, convID UUID, msgType string, content string, metadata json.RawMessage, replyToID *UUID) (*PrivateMessage, error)
 	GetMessages(ctx context.Context, userID, convID UUID, cursorTime *time.Time, cursorID *UUID, limit int) ([]*PrivateMessage, error)
+	GetConversationByID(ctx context.Context, id UUID) (*Conversation, error)
 	EditMessage(ctx context.Context, userID, msgID UUID, content string) (*PrivateMessage, error)
 	DeleteMessage(ctx context.Context, userID, msgID UUID) error
 	MarkConversationRead(ctx context.Context, userID, convID UUID) error

@@ -10,8 +10,9 @@ import (
 
 // TokenBucketLimiter implements a token bucket algorithm using Redis Lua scripts
 type TokenBucketLimiter struct {
-	client redis.Cmdable
-	script *redis.Script
+	client  redis.Cmdable
+	script  *redis.Script
+	timeNow func() time.Time
 }
 
 // Lua script for token bucket
@@ -58,8 +59,9 @@ return { allowed and 1 or 0, new_tokens }
 // NewTokenBucketLimiter creates a new TokenBucketLimiter
 func NewTokenBucketLimiter(client redis.Cmdable) *TokenBucketLimiter {
 	return &TokenBucketLimiter{
-		client: client,
-		script: redis.NewScript(tokenBucketScript),
+		client:  client,
+		script:  redis.NewScript(tokenBucketScript),
+		timeNow: time.Now,
 	}
 }
 
@@ -71,7 +73,7 @@ func (l *TokenBucketLimiter) Allow(ctx context.Context, key string, rate float64
 	tokensKey := fmt.Sprintf("ratelimit:tb:%s:tokens", key)
 	tsKey := fmt.Sprintf("ratelimit:tb:%s:ts", key)
 
-	now := float64(time.Now().UnixNano()) / 1e9 // timestamp in seconds with fractional part
+	now := float64(l.timeNow().UnixNano()) / 1e9 // timestamp in seconds with fractional part
 
 	keys := []string{tokensKey, tsKey}
 	args := []interface{}{rate, capacity, now, tokens}

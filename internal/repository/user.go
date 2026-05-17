@@ -92,6 +92,9 @@ func (r *userRepository) GetByID(ctx context.Context, id domain.UUID) (*domain.U
 
 	user := &domain.User{}
 	var (
+		usernameNull      sql.NullString
+		passwordHashNull  sql.NullString
+		roleIDNull        sql.NullString
 		avatarURL         sql.NullString
 		verificationToken sql.NullString
 		resetToken        sql.NullString
@@ -100,7 +103,7 @@ func (r *userRepository) GetByID(ctx context.Context, id domain.UUID) (*domain.U
 	)
 
 	err := r.db.QueryRow(ctx, query, id).Scan(
-		&user.ID, &user.Username, &user.Email, &user.PasswordHash, &user.RoleID,
+		&user.ID, &usernameNull, &user.Email, &passwordHashNull, &roleIDNull,
 		&avatarURL, &user.IsVerified, &verificationToken, &resetToken,
 		&resetTokenExpires, &lastLogin, &user.CreatedAt, &user.UpdatedAt,
 	)
@@ -111,6 +114,16 @@ func (r *userRepository) GetByID(ctx context.Context, id domain.UUID) (*domain.U
 		}
 		r.logger.Error("Failed to get user by ID", zap.Error(err), zap.String("id", id.String()))
 		return nil, err
+	}
+
+	if usernameNull.Valid {
+		user.Username = usernameNull.String
+	}
+	if passwordHashNull.Valid {
+		user.PasswordHash = passwordHashNull.String
+	}
+	if roleIDNull.Valid {
+		user.RoleID = domain.UUID(roleIDNull.String)
 	}
 
 	// Convert sql.Null to pointers
@@ -144,6 +157,9 @@ func (r *userRepository) GetByEmail(ctx context.Context, email string) (*domain.
 
 	user := &domain.User{}
 	var (
+		usernameNull      sql.NullString
+		passwordHashNull  sql.NullString
+		roleIDNull        sql.NullString
 		avatarURL         sql.NullString
 		verificationToken sql.NullString
 		resetToken        sql.NullString
@@ -152,7 +168,7 @@ func (r *userRepository) GetByEmail(ctx context.Context, email string) (*domain.
 	)
 
 	err := r.db.QueryRow(ctx, query, email).Scan(
-		&user.ID, &user.Username, &user.Email, &user.PasswordHash, &user.RoleID,
+		&user.ID, &usernameNull, &user.Email, &passwordHashNull, &roleIDNull,
 		&avatarURL, &user.IsVerified, &verificationToken, &resetToken,
 		&resetTokenExpires, &lastLogin, &user.CreatedAt, &user.UpdatedAt,
 	)
@@ -163,6 +179,16 @@ func (r *userRepository) GetByEmail(ctx context.Context, email string) (*domain.
 		}
 		r.logger.Error("Failed to get user by email", zap.Error(err), zap.String("email", email))
 		return nil, err
+	}
+
+	if usernameNull.Valid {
+		user.Username = usernameNull.String
+	}
+	if passwordHashNull.Valid {
+		user.PasswordHash = passwordHashNull.String
+	}
+	if roleIDNull.Valid {
+		user.RoleID = domain.UUID(roleIDNull.String)
 	}
 
 	if avatarURL.Valid {
@@ -195,6 +221,9 @@ func (r *userRepository) GetByUsername(ctx context.Context, username string) (*d
 
 	user := &domain.User{}
 	var (
+		usernameNull      sql.NullString
+		passwordHashNull  sql.NullString
+		roleIDNull        sql.NullString
 		avatarURL         sql.NullString
 		verificationToken sql.NullString
 		resetToken        sql.NullString
@@ -203,7 +232,7 @@ func (r *userRepository) GetByUsername(ctx context.Context, username string) (*d
 	)
 
 	err := r.db.QueryRow(ctx, query, username).Scan(
-		&user.ID, &user.Username, &user.Email, &user.PasswordHash, &user.RoleID,
+		&user.ID, &usernameNull, &user.Email, &passwordHashNull, &roleIDNull,
 		&avatarURL, &user.IsVerified, &verificationToken, &resetToken,
 		&resetTokenExpires, &lastLogin, &user.CreatedAt, &user.UpdatedAt,
 	)
@@ -214,6 +243,16 @@ func (r *userRepository) GetByUsername(ctx context.Context, username string) (*d
 		}
 		r.logger.Error("Failed to get user by username", zap.Error(err), zap.String("username", username))
 		return nil, err
+	}
+
+	if usernameNull.Valid {
+		user.Username = usernameNull.String
+	}
+	if passwordHashNull.Valid {
+		user.PasswordHash = passwordHashNull.String
+	}
+	if roleIDNull.Valid {
+		user.RoleID = domain.UUID(roleIDNull.String)
 	}
 
 	if avatarURL.Valid {
@@ -318,6 +357,9 @@ func (r *userRepository) List(ctx context.Context, limit, offset int) ([]*domain
 	for rows.Next() {
 		user := &domain.User{}
 		var (
+			usernameNull      sql.NullString
+			passwordHashNull  sql.NullString
+			roleIDNull        sql.NullString
 			avatarURL         sql.NullString
 			verificationToken sql.NullString
 			resetToken        sql.NullString
@@ -326,12 +368,22 @@ func (r *userRepository) List(ctx context.Context, limit, offset int) ([]*domain
 		)
 
 		err := rows.Scan(
-			&user.ID, &user.Username, &user.Email, &user.PasswordHash, &user.RoleID,
+			&user.ID, &usernameNull, &user.Email, &passwordHashNull, &roleIDNull,
 			&avatarURL, &user.IsVerified, &verificationToken, &resetToken,
 			&resetTokenExpires, &lastLogin, &user.CreatedAt, &user.UpdatedAt,
 		)
 		if err != nil {
 			return nil, err
+		}
+
+		if usernameNull.Valid {
+			user.Username = usernameNull.String
+		}
+		if passwordHashNull.Valid {
+			user.PasswordHash = passwordHashNull.String
+		}
+		if roleIDNull.Valid {
+			user.RoleID = domain.UUID(roleIDNull.String)
 		}
 
 		if avatarURL.Valid {
@@ -377,6 +429,9 @@ func (r *userRepository) Search(ctx context.Context, query string, limit int) ([
 	for rows.Next() {
 		user := &domain.User{}
 		var (
+			usernameNull      sql.NullString
+			passwordHashNull  sql.NullString
+			roleIDNull        sql.NullString
 			avatarURL         sql.NullString
 			verificationToken sql.NullString
 			resetToken        sql.NullString
@@ -385,12 +440,22 @@ func (r *userRepository) Search(ctx context.Context, query string, limit int) ([
 		)
 
 		err := rows.Scan(
-			&user.ID, &user.Username, &user.Email, &user.PasswordHash, &user.RoleID,
+			&user.ID, &usernameNull, &user.Email, &passwordHashNull, &roleIDNull,
 			&avatarURL, &user.IsVerified, &verificationToken, &resetToken,
 			&resetTokenExpires, &lastLogin, &user.CreatedAt, &user.UpdatedAt,
 		)
 		if err != nil {
 			return nil, err
+		}
+
+		if usernameNull.Valid {
+			user.Username = usernameNull.String
+		}
+		if passwordHashNull.Valid {
+			user.PasswordHash = passwordHashNull.String
+		}
+		if roleIDNull.Valid {
+			user.RoleID = domain.UUID(roleIDNull.String)
 		}
 
 		if avatarURL.Valid {
@@ -452,6 +517,9 @@ func (r *userRepository) FindByVerificationToken(ctx context.Context, token stri
 
 	user := &domain.User{}
 	var (
+		usernameNull      sql.NullString
+		passwordHashNull  sql.NullString
+		roleIDNull        sql.NullString
 		avatarURL         sql.NullString
 		verificationToken sql.NullString
 		resetToken        sql.NullString
@@ -460,7 +528,7 @@ func (r *userRepository) FindByVerificationToken(ctx context.Context, token stri
 	)
 
 	err := r.db.QueryRow(ctx, query, token).Scan(
-		&user.ID, &user.Username, &user.Email, &user.PasswordHash, &user.RoleID,
+		&user.ID, &usernameNull, &user.Email, &passwordHashNull, &roleIDNull,
 		&avatarURL, &user.IsVerified, &verificationToken, &resetToken,
 		&resetTokenExpires, &lastLogin, &user.CreatedAt, &user.UpdatedAt,
 	)
@@ -470,6 +538,16 @@ func (r *userRepository) FindByVerificationToken(ctx context.Context, token stri
 			return nil, domain.ErrNotFound
 		}
 		return nil, err
+	}
+
+	if usernameNull.Valid {
+		user.Username = usernameNull.String
+	}
+	if passwordHashNull.Valid {
+		user.PasswordHash = passwordHashNull.String
+	}
+	if roleIDNull.Valid {
+		user.RoleID = domain.UUID(roleIDNull.String)
 	}
 
 	if avatarURL.Valid {
@@ -502,6 +580,9 @@ func (r *userRepository) FindByResetToken(ctx context.Context, token string) (*d
 
 	user := &domain.User{}
 	var (
+		usernameNull      sql.NullString
+		passwordHashNull  sql.NullString
+		roleIDNull        sql.NullString
 		avatarURL         sql.NullString
 		verificationToken sql.NullString
 		resetToken        sql.NullString
@@ -510,7 +591,7 @@ func (r *userRepository) FindByResetToken(ctx context.Context, token string) (*d
 	)
 
 	err := r.db.QueryRow(ctx, query, token).Scan(
-		&user.ID, &user.Username, &user.Email, &user.PasswordHash, &user.RoleID,
+		&user.ID, &usernameNull, &user.Email, &passwordHashNull, &roleIDNull,
 		&avatarURL, &user.IsVerified, &verificationToken, &resetToken,
 		&resetTokenExpires, &lastLogin, &user.CreatedAt, &user.UpdatedAt,
 	)
@@ -520,6 +601,16 @@ func (r *userRepository) FindByResetToken(ctx context.Context, token string) (*d
 			return nil, domain.ErrNotFound
 		}
 		return nil, err
+	}
+
+	if usernameNull.Valid {
+		user.Username = usernameNull.String
+	}
+	if passwordHashNull.Valid {
+		user.PasswordHash = passwordHashNull.String
+	}
+	if roleIDNull.Valid {
+		user.RoleID = domain.UUID(roleIDNull.String)
 	}
 
 	if avatarURL.Valid {

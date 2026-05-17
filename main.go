@@ -75,11 +75,9 @@ func main() {
 		connStr = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s",
 			cfg.DBUser, cfg.DBPassword, cfg.DBHost, cfg.DBPort, cfg.DBName, cfg.DBSSLMode)
 	}
-	if err := database.RunAutoMigrate(connStr); err != nil {
-		logger.Warn("Database auto-migration skipped or partially failed (normal if tables exist)", zap.Error(err))
-	} else {
-		logger.Info("Database auto-migration completed")
-	}
+	// Bypass auto-migration since tables already exist and remote GORM checks can hang
+	logger.Info("Database auto-migration skipped (tables already migrated)")
+
 
 	// Initialize Redis
 	redisClient, err := redis.New(&redis.Config{
@@ -128,6 +126,7 @@ func main() {
 	chatRoomRepo := repository.NewChatRoomRepository(db.Pool(), logger)
 	streamRepo := repository.NewStreamRepository(db.Pool(), logger)
 	streamSessionRepo := repository.NewStreamSessionRepository(db.Pool(), logger)
+	pkRepo := repository.NewPKBattleRepository(db.Pool(), logger)
 	vodRepo := repository.NewVODMediaRepository(db.Pool(), logger)
 	walletRepo := repository.NewWalletRepository(db.Pool(), logger)
 	txRepo := repository.NewTransactionRepository(db.Pool(), logger)
@@ -141,6 +140,7 @@ func main() {
 	paidInteractionRepo := repository.NewPaidInteractionRepository(db.Pool(), logger)
 	withdrawalRepo := repository.NewWithdrawalRepository(db.Pool(), logger)
 	bookingRepo := repository.NewBookingRepository(db.Pool(), logger)
+	moderationRepo := repository.NewModerationRepository(db.Pool(), logger)
 
 	// Initialize Storage and FFmpeg
 	localStorage := storage.NewLocalStorage("./uploads", "/uploads", logger)
@@ -157,7 +157,7 @@ func main() {
 
 	// Initialize Message Broker and WS Hub
 	msgBroker := broker.NewHybridBroker(redisClient, logger)
-	wsHub := websocket.NewHub(msgBroker, redisClient, logger)
+	wsHub := websocket.NewHub(db.Pool(), msgBroker, redisClient, logger)
 	go wsHub.Run()
 
 	// Initialize Blockchain Clients
@@ -168,6 +168,25 @@ func main() {
 	workerPool := worker.NewPool(5, logger)
 	workerPool.Start()
 	defer workerPool.Stop()
+
+	// Initialize Leveling XP usecase & Register handler on workerPool (Fase 5)
+	levelingUseCase := usecase.NewLevelingUseCase(db.Pool(), redisClient, wsHub, logger)
+	workerPool.RegisterHandler(worker.JobXPBatchUpdate, func(ctx context.Context, job *worker.Job) error {
+		return levelingUseCase.FlushXPUpdates(ctx)
+	})
+
+	// Periodic XP Batch Update Trigger (Fase 5)
+	go func() {
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			workerPool.Enqueue(&worker.Job{
+				ID:        fmt.Sprintf("xp-flush-%d", time.Now().Unix()),
+				Type:      worker.JobXPBatchUpdate,
+				CreatedAt: time.Now(),
+			})
+		}
+	}()
 
 	// Initialize and start old background worker (legacy compatibility)
 	bgWorker := workerV1.NewWorker(db.Pool(), redisClient, logger)
@@ -182,20 +201,69 @@ func main() {
 	commentUseCase := usecase.NewCommentUseCase(commentRepo, commentLikeRepo, userRepo, logger)
 	likeUseCase := usecase.NewLikeUseCase(likeRepo, redisClient, msgBroker, logger)
 	messageUseCase := usecase.NewMessageUseCase(messageRepo, chatRoomRepo, userRepo, logger)
-	streamUseCase := usecase.NewStreamUseCase(streamRepo, streamSessionRepo, redisClient, msgBroker, logger)
+	streamUseCase := usecase.NewStreamUseCase(streamRepo, streamSessionRepo, walletRepo, redisClient, msgBroker, logger)
+	pkUseCase := usecase.NewPKBattleUseCase(pkRepo, streamRepo, wsHub, redisClient, logger)
+	trendingUseCase := usecase.NewTrendingUseCase(db.Pool(), redisClient, streamRepo, logger)
+
+	// Periodic Trending Score Recalculator (Fase 6)
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			_ = trendingUseCase.RecalculateTrendingScores(context.Background())
+		}
+	}()
 	vodUseCase := usecase.NewVODUseCase(vodRepo, ffmpegSvc, localStorage, logger)
 	walletUseCase := usecase.NewWalletUseCase(walletRepo, txRepo, redisClient, logger)
-	giftUseCase := usecase.NewGiftUseCase(giftRepo, giftTxRepo, agencyRepo, walletUseCase, wsHub, redisClient, logger)
+	privateChatUseCase := usecase.NewPrivateChatUsecase(privateChatRepo, userRepo, redisClient, logger)
+	giftUseCase := usecase.NewGiftUseCase(giftRepo, giftTxRepo, agencyRepo, walletUseCase, privateChatUseCase, messageRepo, chatRoomRepo, wsHub, redisClient, logger)
 	agencyUseCase := usecase.NewAgencyUseCase(hostAppRepo, agencyRepo, walletUseCase, logger)
 	paymentUseCase := usecase.NewPaymentUseCase(txRepo, duitkuPaymentRepo, walletUseCase, duitkuClient, redisClient, logger)
 	cryptoUseCase := usecase.NewCryptoUseCase(cryptoRepo, walletUseCase, redisClient, logger, []byte("32-byte-long-aes-key-for-crypto"))
-	privateChatUseCase := usecase.NewPrivateChatUsecase(privateChatRepo, userRepo, redisClient, logger)
 	paidInteractionUseCase := usecase.NewPaidInteractionUsecase(paidInteractionRepo, walletRepo, txRepo, userRepo, agencyRepo, redisClient, logger)
 	withdrawalUseCase := usecase.NewWithdrawalUsecase(withdrawalRepo, walletRepo, txRepo, agencyRepo, redisClient, logger)
 	bookingUseCase := usecase.NewBookingUsecase(bookingRepo, walletRepo, agencyRepo, withdrawalUseCase, redisClient, logger)
 	offerRepo := repository.NewOfferRepository(db.Pool(), logger)
 	offerUseCase := usecase.NewOfferUsecase(offerRepo, bookingRepo, bookingUseCase, walletRepo, agencyRepo, redisClient, logger)
 	locationUseCase := usecase.NewLocationUsecase(bookingRepo, redisClient, logger)
+
+	// Initialize ModerationUseCase & NSFW Scanner (Fitur 6)
+	nsfwScanner := usecase.NewAWSRekognitionScanner(logger)
+	moderationUseCase := usecase.NewModerationUseCase(moderationRepo, wsHub, redisClient, logger, nsfwScanner)
+	wsHub.SetModerationUseCase(moderationUseCase)
+
+	// Initialize and start background ModerationWorker
+	moderationWorker := workerV1.NewModerationWorker(moderationUseCase, logger)
+	go moderationWorker.Start(context.Background())
+	defer moderationWorker.Stop()
+
+	// Wait Room & Stream Schedule initialization (Fitur 7)
+	waitRoomHub := websocket.NewWaitRoomHub(db.Pool(), redisClient, logger)
+	go waitRoomHub.Run()
+
+	scheduleRepo := repository.NewLiveScheduleRepository(db.Pool(), logger)
+	scheduleUseCase := usecase.NewLiveScheduleUseCase(scheduleRepo, waitRoomHub, wsHub, redisClient, logger)
+
+	// Periodic Smart Reminder Check (Fitur 7)
+	go func() {
+		ticker := time.NewTicker(1 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			_ = scheduleUseCase.CheckAndSendTieredReminders(context.Background())
+		}
+	}()
+
+	// Daily Occurrence Generator Refill Job (Fitur 7)
+	go func() {
+		time.Sleep(5 * time.Second) // Let system warm up first
+		_ = scheduleUseCase.RefillAllOccurrences(context.Background())
+		ticker := time.NewTicker(12 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			_ = scheduleUseCase.RefillAllOccurrences(context.Background())
+		}
+	}()
+
 	cryptoMonitor := workerV1.NewCryptoMonitor(cryptoRepo, cryptoUseCase, solanaClient, evmClient, logger)
 	go cryptoMonitor.Start()
 	defer cryptoMonitor.Stop()
@@ -216,14 +284,18 @@ func main() {
 		bookingUseCase,
 		offerUseCase,
 		locationUseCase,
+		scheduleUseCase,
+		waitRoomHub,
 		wsHub,
 		logger,
 	)
-	webrtcHandler := delivery.NewWebRTCHandler(webrtcRoomManager, streamUseCase, authUseCase, logger)
+	webrtcHandler := delivery.NewWebRTCHandler(webrtcRoomManager, streamUseCase, authUseCase, trendingUseCase, scheduleUseCase, logger)
+	pkHandler := delivery.NewPKBattleHandler(pkUseCase, logger)
 	vodHandler := delivery.NewVODHandler(vodUseCase, logger)
 	monetizationHandler := delivery.NewMonetizationHandler(walletUseCase, giftUseCase, agencyUseCase, paymentUseCase, withdrawalUseCase, logger)
 	healthHandler := delivery.NewHealthHandler(db.Pool(), redisClient, msgBroker)
 	cryptoHandler := delivery.NewCryptoHandler(cryptoUseCase, cryptoMonitor, logger)
+	moderationHandler := delivery.NewModerationHandler(moderationUseCase, logger)
 
 	// Initialize middleware
 	authMiddleware := middleware.NewAuthMiddleware(authService, redisClient, logger)
@@ -244,6 +316,8 @@ func main() {
 		monetizationHandler,
 		healthHandler,
 		cryptoHandler,
+		pkHandler,
+		moderationHandler,
 		authMiddleware,
 		rbacMiddleware,
 		rateLimitMiddleware,

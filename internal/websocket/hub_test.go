@@ -30,7 +30,7 @@ func TestHub_RegisterAndUnregister(t *testing.T) {
 	logger := zap.NewNop()
 	broker := &mockBroker{}
 
-	hub := NewHub(broker, nil, logger)
+	hub := NewHub(nil, broker, nil, logger)
 	go hub.Run()
 
 	client := &Client{

@@ -155,6 +155,10 @@ func (u *privateChatUsecase) GetMessages(ctx context.Context, userID, convID dom
 	return u.repo.ListMessages(ctx, convID, cursorTime, cursorID, limit)
 }
 
+func (u *privateChatUsecase) GetConversationByID(ctx context.Context, id domain.UUID) (*domain.Conversation, error) {
+	return u.repo.GetConversationByID(ctx, id)
+}
+
 func (u *privateChatUsecase) EditMessage(ctx context.Context, userID, msgID domain.UUID, content string) (*domain.PrivateMessage, error) {
 	msg, err := u.repo.GetMessageByID(ctx, msgID)
 	if err != nil {

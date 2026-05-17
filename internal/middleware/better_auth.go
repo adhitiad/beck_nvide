@@ -6,60 +6,64 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/redis/go-redis/v9"
 	"nvide-live/internal/domain"
 )
 
-// BetterAuthMiddleware validates sessions from Better Auth
-func BetterAuthMiddleware(db *sql.DB) func(http.Handler) http.Handler {
+type AuthHandler struct {
+	db          *sql.DB
+	redisClient *redis.Client
+}
+
+func NewAuthHandler(db *sql.DB, redisClient *redis.Client) *AuthHandler {
+	return &AuthHandler{
+		db:          db,
+		redisClient: redisClient,
+	}
+}
+
+// BetterAuthMiddleware validates sessions from Better Auth with Redis caching
+func (h *AuthHandler) BetterAuthMiddleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Get session token from cookie
+			// 1. Get session token from cookie
 			cookie, err := r.Cookie("better-auth.session_token")
-			if err != nil {
-				// No session cookie, allow through (protected routes will handle)
+			if err != nil || cookie.Value == "" {
 				next.ServeHTTP(w, r)
 				return
 			}
 
 			sessionToken := cookie.Value
-			if sessionToken == "" {
-				next.ServeHTTP(w, r)
-				return
-			}
+			sessionKey := "auth:session:" + sessionToken
 
-			// Query Better Auth session table
 			var userIDStr string
-			var expiresAt time.Time
 			
-			// Note: GORM maps model Session to table 'sessions'
-			query := `SELECT "UserID", "ExpiresAt" FROM "sessions" WHERE "Token" = $1 LIMIT 1`
-			err = db.QueryRow(query, sessionToken).Scan(&userIDStr, &expiresAt)
-			
-			if err != nil {
-				if err != sql.ErrNoRows {
-					// Database error
-					http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+			// 2. Try to get from Redis Cache first
+			cachedUID, err := h.redisClient.Get(r.Context(), sessionKey).Result()
+			if err == nil {
+				userIDStr = cachedUID
+			} else {
+				// 3. Cache miss: Query Database
+				var expiresAt time.Time
+				query := `SELECT "user_id", "expires_at" FROM "sessions" WHERE "token" = $1 LIMIT 1`
+				err = h.db.QueryRowContext(r.Context(), query, sessionToken).Scan(&userIDStr, &expiresAt)
+				
+				if err != nil || time.Now().After(expiresAt) {
+					next.ServeHTTP(w, r)
 					return
 				}
-				// Session not found
-				next.ServeHTTP(w, r)
-				return
+
+				// 4. Save to Redis for 10 minutes to optimize future requests
+				h.redisClient.Set(r.Context(), sessionKey, userIDStr, 10*time.Minute)
 			}
 
-			// Check if session is expired
-			if time.Now().After(expiresAt) {
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			// Convert string ID to domain.UUID
+			// 5. Convert to Domain UUID and inject into Context
 			userID, err := domain.FromString(userIDStr)
 			if err != nil {
 				next.ServeHTTP(w, r)
 				return
 			}
 
-			// Add userID to context
 			ctx := context.WithValue(r.Context(), userIDUUIDKey, userID)
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})

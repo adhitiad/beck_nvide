@@ -17,6 +17,8 @@ func SetupRouter(
 	monetizationHandler *MonetizationHandler,
 	healthHandler *HealthHandler,
 	cryptoHandler *CryptoHandler,
+	pkHandler *PKBattleHandler,
+	moderationHandler *ModerationHandler,
 	authMiddleware *middleware.AuthMiddleware,
 	rbacMiddleware *middleware.RBACMiddleware,
 	rateLimitMiddleware *middleware.RateLimitMiddleware,
@@ -104,8 +106,26 @@ func SetupRouter(
 	protected.HandleFunc("/hosts/me/schedules", handler.SetHostSchedule).Methods("POST")
 	router.HandleFunc("/api/v1/hosts/{id}/available-slots", handler.GetAvailableSlots).Methods("GET")
 	protected.HandleFunc("/bookings", handler.RequestBooking).Methods("POST")
-	protected.HandleFunc("/host/bookings/{id}/accept", handler.AcceptBooking).Methods("POST")
-	protected.HandleFunc("/host/bookings/{id}/reject", handler.RejectBooking).Methods("POST")
+	hostBookings := protected.PathPrefix("/host/bookings").Subrouter()
+	hostBookings.HandleFunc("/{id}/accept", handler.AcceptBooking).Methods("POST")
+	hostBookings.HandleFunc("/{id}/reject", handler.RejectBooking).Methods("POST")
+
+	// Live Streaming Schedules (Fitur 7)
+	protected.HandleFunc("/streams/schedules", handler.CreateSchedule).Methods("POST")
+	protected.HandleFunc("/streams/schedules/{id}", handler.UpdateSchedule).Methods("PUT")
+	protected.HandleFunc("/streams/schedules/{id}", handler.CancelSchedule).Methods("DELETE")
+	protected.HandleFunc("/streams/schedules/{id}/occurrences/{occ_id}/cancel", handler.CancelOccurrence).Methods("POST")
+	protected.HandleFunc("/streams/schedules/{id}/reminders", handler.SubscribeReminder).Methods("POST")
+	protected.HandleFunc("/streams/schedules/{id}/reminders", handler.UnsubscribeReminder).Methods("DELETE")
+	protected.HandleFunc("/users/me/reminders", handler.ListMyReminders).Methods("GET")
+	router.HandleFunc("/api/v1/hosts/{id}/schedules/next", handler.GetNextSchedule).Methods("GET")
+	router.HandleFunc("/api/v1/discover/upcoming", handler.GetUpcomingFeed).Methods("GET")
+	router.HandleFunc("/api/v1/discover/trending-schedules", handler.GetTrendingSchedules).Methods("GET")
+	protected.HandleFunc("/hosts/me/schedules/analytics", handler.GetAnalytics).Methods("GET")
+	protected.HandleFunc("/wait-rooms/{id}/pledge", handler.PledgeGift).Methods("POST")
+
+	// Wait Room WebSocket (WebSocket)
+	router.HandleFunc("/ws/wait-room/{occurrence_id}", handler.ServeWaitRoomWS).Methods("GET")
 
 	// OB/BO routes
 	protected.HandleFunc("/hosts/me/offers", handler.CreateHostOffer).Methods("POST")
@@ -133,9 +153,11 @@ func SetupRouter(
 	protected.HandleFunc("/streams", webrtcHandler.CreateStream).Methods("POST")
 	protected.HandleFunc("/streams/{stream_id}/start", webrtcHandler.StartStream).Methods("POST")
 	protected.HandleFunc("/streams/{stream_id}/end", webrtcHandler.EndStream).Methods("POST")
+	protected.HandleFunc("/streams/{stream_id}/mode", webrtcHandler.SwitchRoomMode).Methods("PATCH")
 	
 	// Public Stream Routes
 	apiV1.HandleFunc("/streams/live", webrtcHandler.GetLiveStreams).Methods("GET")
+	apiV1.HandleFunc("/streams/trending", webrtcHandler.GetTrendingStreams).Methods("GET")
 	apiV1.HandleFunc("/vods", vodHandler.GetVODList).Methods("GET")
 
 	// VOD Management
@@ -183,6 +205,17 @@ func SetupRouter(
 	protected.HandleFunc("/crypto/withdrawal", cryptoHandler.RequestWithdrawal).Methods("POST")
 	router.HandleFunc("/api/v1/crypto/rates", cryptoHandler.GetExchangeRates).Methods("GET")
 	router.HandleFunc("/api/v1/crypto/webhooks/{provider}", cryptoHandler.CryptoWebhook).Methods("POST")
+
+	// ===== PK BATTLE ROUTES =====
+	protected.HandleFunc("/pk/battle/invite", pkHandler.InvitePK).Methods("POST")
+	protected.HandleFunc("/pk/battle/{pk_id}/accept", pkHandler.AcceptPK).Methods("POST")
+	protected.HandleFunc("/pk/battle/{pk_id}/reject", pkHandler.RejectPK).Methods("POST")
+	router.HandleFunc("/api/v1/pk/battle/{pk_id}/status", pkHandler.GetStatus).Methods("GET")
+
+	// ===== AUTO-MODERATION & SAFETY ENGINE ROUTES =====
+	if moderationHandler != nil {
+		RegisterModerationRoutes(protected, moderationHandler)
+	}
 
 	// Health check
 	router.HandleFunc("/health", healthHandler.HealthCheck).Methods("GET")
