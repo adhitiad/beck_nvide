@@ -2,11 +2,13 @@ package usecase
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
+	"golang.org/x/sync/singleflight"
 
 	"nvide-live/internal/domain"
 	"nvide-live/pkg/broker"
@@ -27,6 +29,7 @@ type StreamUseCase struct {
 	muxClient     MuxClient
 	broker        broker.Broker
 	logger        *zap.Logger
+	sf            singleflight.Group
 }
 
 func NewStreamUseCase(
@@ -50,6 +53,10 @@ func NewStreamUseCase(
 
 func (uc *StreamUseCase) SetMuxClient(client MuxClient) {
 	uc.muxClient = client
+}
+
+func (uc *StreamUseCase) GetRedisClient() *redis.Client {
+	return uc.redisClient
 }
 
 // CreateStream creates a new stream
@@ -234,23 +241,53 @@ func (uc *StreamUseCase) EndStream(ctx context.Context, streamID domain.UUID) er
 	return nil
 }
 
-// GetLiveStreams returns a list of live streams
+// GetLiveStreams returns a list of live streams (Cached for 30 seconds with Singleflight protection)
 func (uc *StreamUseCase) GetLiveStreams(ctx context.Context, limit, offset int) ([]*domain.Stream, error) {
-	streams, err := uc.streamRepo.ListLive(ctx, limit, offset)
+	cacheKey := fmt.Sprintf("streams:live:%d:%d", limit, offset)
+
+	// 1. Try cache first
+	if uc.redisClient != nil {
+		cached, err := uc.redisClient.Get(ctx, cacheKey)
+		if err == nil && cached != "" {
+			var streams []*domain.Stream
+			if err := json.Unmarshal([]byte(cached), &streams); err == nil {
+				return streams, nil
+			}
+		}
+	}
+
+	// 2. Singleflight protection
+	val, err, _ := uc.sf.Do(cacheKey, func() (interface{}, error) {
+		streams, err := uc.streamRepo.ListLive(ctx, limit, offset)
+		if err != nil {
+			return nil, err
+		}
+
+		// Attach viewer counts from Redis
+		for _, stream := range streams {
+			key := fmt.Sprintf("stream:viewer_count:%s", stream.RoomID.String())
+			countStr, _ := uc.redisClient.GetClient().Get(ctx, key).Result()
+			var count int
+			fmt.Sscanf(countStr, "%d", &count)
+			stream.ViewerPeak = count // temporary store current count in ViewerPeak or another field
+		}
+
+		// Save to cache (30 seconds TTL)
+		if uc.redisClient != nil {
+			data, err := json.Marshal(streams)
+			if err == nil {
+				_ = uc.redisClient.Set(ctx, cacheKey, string(data), 30*time.Second)
+			}
+		}
+
+		return streams, nil
+	})
+
 	if err != nil {
 		return nil, err
 	}
 
-	// Attach viewer counts from Redis
-	for _, stream := range streams {
-		key := fmt.Sprintf("stream:viewer_count:%s", stream.RoomID.String())
-		countStr, _ := uc.redisClient.GetClient().Get(ctx, key).Result()
-		var count int
-		fmt.Sscanf(countStr, "%d", &count)
-		stream.ViewerPeak = count // temporary store current count in ViewerPeak or another field
-	}
-
-	return streams, nil
+	return val.([]*domain.Stream), nil
 }
 
 // GetStreamByID returns stream details by ID
@@ -354,4 +391,55 @@ func (uc *StreamUseCase) LeaveStream(ctx context.Context, roomID, viewerID domai
 	uc.redisClient.GetClient().Decr(ctx, key)
 
 	return nil
+}
+
+// RoomViewerCounter defines interface to count viewers
+type RoomViewerCounter interface {
+	GetViewerCount(roomID string) int
+}
+
+// StartViewerCountSyncJob periodically syncs Redis viewer counts to PostgreSQL every 1 minute, and runs crash recovery
+func (uc *StreamUseCase) StartViewerCountSyncJob(ctx context.Context, counter RoomViewerCounter) {
+	ticker := time.NewTicker(1 * time.Minute)
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				uc.logger.Info("Running stream viewer count synchronization job...")
+				// 1. Fetch all live streams from PostgreSQL
+				streams, err := uc.streamRepo.ListLive(ctx, 1000, 0)
+				if err != nil {
+					uc.logger.Error("Failed to list live streams for viewer count sync", zap.Error(err))
+					continue
+				}
+
+				for _, s := range streams {
+					roomIDStr := s.ID.String()
+					redisKey := fmt.Sprintf("stream:viewer_count:%s", roomIDStr)
+
+					// 2. Crash Recovery / Sync check: Match Redis count with actual active connections in RoomManager
+					actualViewers := counter.GetViewerCount(roomIDStr)
+
+					// Update Redis with actual connection count if they drifted (or just force sync to match active WS)
+					redisVal, err := uc.redisClient.GetClient().Get(ctx, redisKey).Int()
+					if err != nil || redisVal != actualViewers {
+						uc.logger.Warn("Viewer count drift detected (or crash recovery triggered), resetting Redis count",
+							zap.String("room_id", roomIDStr),
+							zap.Int("redis", redisVal),
+							zap.Int("actual", actualViewers),
+						)
+						uc.redisClient.GetClient().Set(ctx, redisKey, actualViewers, 24*time.Hour)
+					}
+
+					// 3. Update PostgreSQL with the synchronized count
+					s.Viewers = actualViewers
+					if err := uc.streamRepo.Update(ctx, s); err != nil {
+						uc.logger.Error("Failed to update viewer count in DB", zap.String("room_id", roomIDStr), zap.Error(err))
+					}
+				}
+			}
+		}
+	}()
 }

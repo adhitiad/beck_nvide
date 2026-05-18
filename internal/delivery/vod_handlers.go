@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/gorilla/mux"
 	"go.uber.org/zap"
@@ -57,6 +58,19 @@ func (h *VODHandler) UploadVOD(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
+
+	// Validate file size (max 500MB)
+	if header.Size > 500*1024*1024 {
+		h.writeError(w, http.StatusBadRequest, "FILE_TOO_LARGE", "Video size exceeds 500MB limit")
+		return
+	}
+
+	// Validate file format (.mp4 only)
+	ext := strings.ToLower(filepath.Ext(header.Filename))
+	if ext != ".mp4" {
+		h.writeError(w, http.StatusBadRequest, "INVALID_FORMAT", "Only MP4 format is allowed")
+		return
+	}
 
 	title := r.FormValue("title")
 	if title == "" {

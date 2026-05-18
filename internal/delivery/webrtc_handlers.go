@@ -1,9 +1,12 @@
 package delivery
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
@@ -153,6 +156,247 @@ func (h *WebRTCHandler) SignalWS(w http.ResponseWriter, r *http.Request) {
 		// Process signaling
 		if err := h.roomManager.ProcessSignaling(roomIDStr, peerIDStr, msg); err != nil {
 			h.logger.Error("Failed to process signaling", zap.Error(err))
+		}
+	}
+}
+
+// ServeHostWS handles host WS signaling connection with grace period and heartbeat check
+func (h *WebRTCHandler) ServeHostWS(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	roomIDStr := vars["room_id"]
+	if roomIDStr == "" {
+		h.writeError(w, http.StatusBadRequest, "BAD_REQUEST", "Room ID is required")
+		return
+	}
+
+	token := r.URL.Query().Get("token")
+	if token == "" {
+		h.writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Token is required")
+		return
+	}
+
+	claims, err := h.authUseCase.ValidateToken(r.Context(), token)
+	if err != nil {
+		h.writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Invalid token")
+		return
+	}
+
+	userIDStr := claims.UserID
+	roomID, err := domain.FromString(roomIDStr)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid room ID")
+		return
+	}
+	userID, err := domain.FromString(userIDStr)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid user ID")
+		return
+	}
+
+	// Security: Verify that the user connecting as host actually owns this stream/room
+	stream, err := h.streamUseCase.GetStreamByID(r.Context(), roomID)
+	if err != nil {
+		h.writeError(w, http.StatusNotFound, "NOT_FOUND", "Stream not found")
+		return
+	}
+	if stream.HostID != userID {
+		h.writeError(w, http.StatusForbidden, "FORBIDDEN", "You are not the host of this stream")
+		return
+	}
+
+	// Upgrade connection
+	conn, err := webrtcUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		h.logger.Error("Failed to upgrade websocket connection for host", zap.Error(err))
+		return
+	}
+
+	peerIDStr := userIDStr + "_host"
+	sendChan := make(chan webrtcManager.SignalingMessage, 100)
+
+	// Track host connection in Redis to manage reconnect grace period
+	hostConnectedKey := fmt.Sprintf("stream:host_connected:%s", roomIDStr)
+	redisClient := h.streamUseCase.GetRedisClient()
+	redisClient.GetClient().Set(r.Context(), hostConnectedKey, "true", 24*time.Hour)
+
+	// Set up PeerConnection
+	_, err = h.roomManager.HandleHostConnection(roomIDStr, peerIDStr, sendChan)
+	if err != nil {
+		h.logger.Error("Failed to handle host connection", zap.Error(err))
+		conn.Close()
+		return
+	}
+
+	// Start reading signaling messages from sendChan and writing to WS
+	go func() {
+		for msg := range sendChan {
+			if err := conn.WriteJSON(msg); err != nil {
+				h.logger.Error("Failed to write to host WS", zap.Error(err))
+				break
+			}
+		}
+	}()
+
+	// Heartbeat setup: Ping every 10 seconds, missing 3 consecutive pings = disconnect
+	// We set a read deadline of 35 seconds (30 seconds ping timeout + 5 seconds buffer)
+	_ = conn.SetReadDeadline(time.Now().Add(35 * time.Second))
+	conn.SetPingHandler(func(appData string) error {
+		_ = conn.SetReadDeadline(time.Now().Add(35 * time.Second))
+		return conn.WriteMessage(websocket.PongMessage, []byte(appData))
+	})
+
+	// Defer cleanup and grace period scheduling
+	defer func() {
+		h.logger.Info("Host connection closed, cleaning up and initiating grace period", zap.String("room_id", roomIDStr))
+		h.roomManager.RemovePeer(roomIDStr, peerIDStr)
+		close(sendChan)
+		_ = conn.Close()
+
+		// Set host connected state to false
+		redisClient.GetClient().Set(context.Background(), hostConnectedKey, "false", 1*time.Hour)
+
+		// Start 30-second host disconnect grace period timer
+		go func() {
+			time.Sleep(30 * time.Second)
+			// Check if host reconnected (redis key becomes "true")
+			val, err := redisClient.GetClient().Get(context.Background(), hostConnectedKey).Result()
+			if err != nil || val != "true" {
+				h.logger.Warn("Host failed to reconnect within 30 seconds grace period. Ending stream.", zap.String("room_id", roomIDStr))
+				_ = h.streamUseCase.EndStream(context.Background(), roomID)
+				h.roomManager.RemoveRoom(roomIDStr)
+			} else {
+				h.logger.Info("Host successfully reconnected within grace period", zap.String("room_id", roomIDStr))
+			}
+		}()
+	}()
+
+	// Read loop
+	for {
+		var msg webrtcManager.SignalingMessage
+		if err := conn.ReadJSON(&msg); err != nil {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				h.logger.Error("Unexpected host WS close", zap.Error(err))
+			}
+			break
+		}
+
+		// Support explicit application-level ping message if client wants to send ping via text
+		if msg.Type == "ping" {
+			_ = conn.SetReadDeadline(time.Now().Add(35 * time.Second))
+			_ = conn.WriteJSON(webrtcManager.SignalingMessage{Type: "pong"})
+			continue
+		}
+
+		// Process signaling
+		if err := h.roomManager.ProcessSignaling(roomIDStr, peerIDStr, msg); err != nil {
+			h.logger.Error("Failed to process host signaling", zap.Error(err))
+		}
+	}
+}
+
+// ServeViewerWS handles viewer WS signaling connection with active viewer count tracking in Redis
+func (h *WebRTCHandler) ServeViewerWS(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	roomIDStr := vars["room_id"]
+	if roomIDStr == "" {
+		h.writeError(w, http.StatusBadRequest, "BAD_REQUEST", "Room ID is required")
+		return
+	}
+
+	token := r.URL.Query().Get("token")
+	if token == "" {
+		h.writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Token is required")
+		return
+	}
+
+	claims, err := h.authUseCase.ValidateToken(r.Context(), token)
+	if err != nil {
+		h.writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Invalid token")
+		return
+	}
+
+	userIDStr := claims.UserID
+	roomID, err := domain.FromString(roomIDStr)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid room ID")
+		return
+	}
+	userID, err := domain.FromString(userIDStr)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "BAD_REQUEST", "Invalid user ID")
+		return
+	}
+
+	// Upgrade connection
+	conn, err := webrtcUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		h.logger.Error("Failed to upgrade websocket connection for viewer", zap.Error(err))
+		return
+	}
+
+	peerIDStr := userIDStr + "_viewer"
+	sendChan := make(chan webrtcManager.SignalingMessage, 100)
+
+	// Set up PeerConnection
+	_, err = h.roomManager.HandleViewerConnection(roomIDStr, peerIDStr, sendChan)
+	if err != nil {
+		h.logger.Error("Failed to handle viewer connection", zap.Error(err))
+		conn.Close()
+		return
+	}
+
+	// Track Viewer Count Accuracy - Atomic INCR in Redis on Join
+	ip := r.RemoteAddr
+	if strings.Contains(ip, ":") {
+		ip = strings.Split(ip, ":")[0]
+	}
+	password := r.URL.Query().Get("password")
+
+	err = h.streamUseCase.JoinStream(r.Context(), roomID, userID, ip, password)
+	if err != nil {
+		h.logger.Error("Viewer failed to join stream", zap.Error(err))
+		conn.WriteJSON(webrtcManager.SignalingMessage{
+			Type: "error",
+			Data: []byte(err.Error()),
+		})
+		conn.Close()
+		return
+	}
+
+	// Start reading signaling messages from sendChan and writing to WS
+	go func() {
+		for msg := range sendChan {
+			if err := conn.WriteJSON(msg); err != nil {
+				h.logger.Error("Failed to write to viewer WS", zap.Error(err))
+				break
+			}
+		}
+	}()
+
+	// Defer cleanup and decrement count in Redis
+	defer func() {
+		h.logger.Info("Viewer connection closed, cleaning up", zap.String("room_id", roomIDStr), zap.String("user_id", userIDStr))
+		h.roomManager.RemovePeer(roomIDStr, peerIDStr)
+		close(sendChan)
+		_ = conn.Close()
+
+		// Track Viewer Count Accuracy - Atomic DECR in Redis on Leave
+		_ = h.streamUseCase.LeaveStream(context.Background(), roomID, userID)
+	}()
+
+	// Read loop
+	for {
+		var msg webrtcManager.SignalingMessage
+		if err := conn.ReadJSON(&msg); err != nil {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				h.logger.Error("Unexpected viewer WS close", zap.Error(err))
+			}
+			break
+		}
+
+		// Process signaling
+		if err := h.roomManager.ProcessSignaling(roomIDStr, peerIDStr, msg); err != nil {
+			h.logger.Error("Failed to process viewer signaling", zap.Error(err))
 		}
 	}
 }

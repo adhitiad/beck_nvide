@@ -21,6 +21,7 @@ type LikeRepository interface {
 	HasLiked(ctx context.Context, userID, contentID UUID, contentType string) (bool, error)
 	CountByContent(ctx context.Context, contentID UUID, contentType string) (int, error)
 	GetByUser(ctx context.Context, userID UUID, limit, offset int) ([]*Like, error)
+	BatchCreate(ctx context.Context, likes []*Like) error
 }
 
 // LikeTarget represents a target for like operations

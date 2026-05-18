@@ -30,6 +30,7 @@ type Conversation struct {
 	RecipientID   UUID       `json:"recipient_id" db:"recipient_id"`
 	LastMessageID *UUID      `json:"last_message_id,omitempty" db:"last_message_id"`
 	LastMessageAt *time.Time `json:"last_message_at,omitempty" db:"last_message_at"`
+	UnreadCount   int        `json:"unread_count" db:"unread_count"`
 	CreatedAt     time.Time  `json:"created_at" db:"created_at"`
 	UpdatedAt     time.Time  `json:"updated_at" db:"updated_at"`
 

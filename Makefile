@@ -71,4 +71,7 @@ lint: ## Run golangci-lint (if installed)
 		echo "golangci-lint not installed. Install with: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"; \
 	fi
 
+generate-types: ## Auto-generate TypeScript types from Go domain models
+	go run tools/generate_types.go ../front_nvide/lib/types/api.ts
+
 .DEFAULT_GOAL := help

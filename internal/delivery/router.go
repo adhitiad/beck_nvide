@@ -7,6 +7,9 @@ import (
 	"go.uber.org/zap"
 
 	"nvide-live/internal/middleware"
+	"nvide-live/pkg/wallet"
+
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 // SetupRouter configures HTTP routes
@@ -22,13 +25,19 @@ func SetupRouter(
 	authMiddleware *middleware.AuthMiddleware,
 	rbacMiddleware *middleware.RBACMiddleware,
 	rateLimitMiddleware *middleware.RateLimitMiddleware,
+	idempotencyMiddleware *wallet.IdempotencyManager,
 	logger *zap.Logger,
 ) *mux.Router {
 	router := mux.NewRouter()
 
 	// Apply global middleware
-	router.Use(middleware.LoggingMiddleware(logger))
+	router.Use(middleware.RequestID)                 // Generate and inject UUID v7 X-Request-ID
+	router.Use(middleware.LoggerMiddleware(logger)) // Log HTTP requests with correlation tracing
 	router.Use(middleware.RecoveryMiddleware(logger))
+	router.Use(middleware.MetricsMiddleware) // Apply Prometheus Metrics Middleware!
+	if idempotencyMiddleware != nil {
+		router.Use(idempotencyMiddleware.Middleware())
+	}
 
 	// Apply rate limiting globally (optional)
 	if rateLimitMiddleware != nil {
@@ -147,6 +156,8 @@ func SetupRouter(
 
 	// WebRTC Signaling (WebSocket)
 	router.HandleFunc("/api/v1/streams/{room_id}/signal", webrtcHandler.SignalWS).Methods("GET")
+	router.HandleFunc("/ws/stream/{room_id}/host", webrtcHandler.ServeHostWS).Methods("GET")
+	router.HandleFunc("/ws/stream/{room_id}/viewer", webrtcHandler.ServeViewerWS).Methods("GET")
 	router.HandleFunc("/api/v1/streams/{stream_id}", webrtcHandler.GetStream).Methods("GET")
 	
 	// Stream Management (Protected)
@@ -219,6 +230,7 @@ func SetupRouter(
 
 	// Health check
 	router.HandleFunc("/health", healthHandler.HealthCheck).Methods("GET")
+	router.Handle("/metrics", promhttp.Handler()).Methods("GET")
 
 	// Ready check
 	router.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {

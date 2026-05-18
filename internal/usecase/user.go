@@ -2,41 +2,79 @@ package usecase
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"time"
 
 	"go.uber.org/zap"
+	"golang.org/x/sync/singleflight"
 	"nvide-live/internal/domain"
+	"nvide-live/pkg/redis"
 )
 
 // UserUseCase handles user business logic
 type UserUseCase struct {
 	userRepo domain.UserRepository
+	redis    *redis.Client
 	logger   *zap.Logger
+	sf       singleflight.Group
 }
 
 // NewUserUseCase creates new user usecase
-func NewUserUseCase(userRepo domain.UserRepository, logger *zap.Logger) *UserUseCase {
+func NewUserUseCase(userRepo domain.UserRepository, redis *redis.Client, logger *zap.Logger) *UserUseCase {
 	return &UserUseCase{
 		userRepo: userRepo,
+		redis:    redis,
 		logger:   logger,
 	}
 }
 
-// GetProfile returns user profile by ID
+// GetProfile returns user profile by ID (Cached for 1 hour with Cache Stampede prevention)
 func (uc *UserUseCase) GetProfile(ctx context.Context, userID domain.UUID) (*domain.User, error) {
-	user, err := uc.userRepo.GetByID(ctx, userID)
+	cacheKey := fmt.Sprintf("user:profile:%s", userID.String())
+
+	// 1. Try cache first
+	if uc.redis != nil {
+		cached, err := uc.redis.Get(ctx, cacheKey)
+		if err == nil && cached != "" {
+			var user domain.User
+			if err := json.Unmarshal([]byte(cached), &user); err == nil {
+				return &user, nil
+			}
+		}
+	}
+
+	// 2. Cache Stampede prevention using Singleflight
+	val, err, _ := uc.sf.Do(userID.String(), func() (interface{}, error) {
+		user, err := uc.userRepo.GetByID(ctx, userID)
+		if err != nil {
+			return nil, err
+		}
+
+		// Remove sensitive data
+		user.PasswordHash = ""
+		user.VerificationToken = nil
+		user.ResetToken = nil
+
+		// Save to cache (1 hour TTL)
+		if uc.redis != nil {
+			data, err := json.Marshal(user)
+			if err == nil {
+				_ = uc.redis.Set(ctx, cacheKey, string(data), 1*time.Hour)
+			}
+		}
+
+		return user, nil
+	})
+
 	if err != nil {
 		return nil, err
 	}
 
-	// Remove sensitive data
-	user.PasswordHash = ""
-	user.VerificationToken = nil
-	user.ResetToken = nil
-
-	return user, nil
+	return val.(*domain.User), nil
 }
 
-// UpdateProfile updates user profile
+// UpdateProfile updates user profile and invalidates cache
 func (uc *UserUseCase) UpdateProfile(ctx context.Context, userID domain.UUID, updates map[string]interface{}) (*domain.User, error) {
 	user, err := uc.userRepo.GetByID(ctx, userID)
 	if err != nil {
@@ -69,6 +107,12 @@ func (uc *UserUseCase) UpdateProfile(ctx context.Context, userID domain.UUID, up
 		return nil, err
 	}
 
+	// Invalidate Cache
+	if uc.redis != nil {
+		cacheKey := fmt.Sprintf("user:profile:%s", userID.String())
+		_ = uc.redis.GetClient().Del(ctx, cacheKey)
+	}
+
 	user.PasswordHash = ""
 	user.VerificationToken = nil
 	user.ResetToken = nil
@@ -76,8 +120,12 @@ func (uc *UserUseCase) UpdateProfile(ctx context.Context, userID domain.UUID, up
 	return user, nil
 }
 
-// DeleteAccount deletes user account
+// DeleteAccount deletes user account and invalidates cache
 func (uc *UserUseCase) DeleteAccount(ctx context.Context, userID domain.UUID) error {
-	// In production, you might want soft delete instead
+	// Invalidate Cache
+	if uc.redis != nil {
+		cacheKey := fmt.Sprintf("user:profile:%s", userID.String())
+		_ = uc.redis.GetClient().Del(ctx, cacheKey)
+	}
 	return uc.userRepo.Delete(ctx, userID)
 }

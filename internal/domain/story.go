@@ -15,14 +15,17 @@ type Story struct {
 	ViewCount int       `json:"view_count" db:"view_count"`
 	CreatedAt time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
+	MediaURL  string    `json:"media_url" db:"media_url"`
+	Caption   string    `json:"caption" db:"caption"`
+	IsExpired bool      `json:"is_expired" db:"is_expired"`
 
 	// Relations
 	User *User `json:"user,omitempty"`
 }
 
-// IsExpired checks if story has expired (24h)
-func (s *Story) IsExpired() bool {
-	return time.Now().After(s.ExpiresAt)
+// HasExpired checks if story has expired (24h or flagged as expired)
+func (s *Story) HasExpired() bool {
+	return s.IsExpired || time.Now().After(s.ExpiresAt)
 }
 
 // StoryView represents a view of a story
@@ -30,6 +33,7 @@ type StoryView struct {
 	ID       UUID      `json:"id" db:"id"`
 	StoryID  UUID      `json:"story_id" db:"story_id"`
 	UserID   UUID      `json:"user_id" db:"user_id"`
+	ViewerID UUID      `json:"viewer_id" db:"viewer_id"`
 	ViewedAt time.Time `json:"viewed_at" db:"viewed_at"`
 }
 
@@ -44,6 +48,7 @@ type StoryRepository interface {
 	Delete(ctx context.Context, id UUID) error
 	DeleteExpired(ctx context.Context) error
 	IncrementViewCount(ctx context.Context, id UUID) error
+	AddViewCount(ctx context.Context, id UUID, delta int) error
 	CountByUser(ctx context.Context, userID UUID) (int, error)
 }
 

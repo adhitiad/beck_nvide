@@ -1,63 +1,15 @@
 package middleware
 
 import (
-	"bufio"
-	"context"
 	"encoding/json"
-	"errors"
-	"net"
-	"net/http"
-	"time"
-
-	"github.com/google/uuid"
 	"go.uber.org/zap"
+	"net/http"
 )
 
 type loggingContextKey string
 
 const CorrelationIDKey loggingContextKey = "correlation_id"
 
-// LoggingMiddleware logs HTTP requests with correlation ID
-func LoggingMiddleware(logger *zap.Logger) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			start := time.Now()
-			
-			// Get or create correlation ID
-			correlationID := r.Header.Get("X-Correlation-ID")
-			if correlationID == "" {
-				correlationID = uuid.New().String()
-			}
-
-			// Inject correlation ID into context and response header
-			ctx := context.WithValue(r.Context(), CorrelationIDKey, correlationID)
-			w.Header().Set("X-Correlation-ID", correlationID)
-
-			ww := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
-
-			next.ServeHTTP(ww, r.WithContext(ctx))
-
-			duration := time.Since(start)
-			
-			// Extract user_id from context if available (set by AuthMiddleware)
-			userID := ""
-			if uid := r.Context().Value(userIDKey); uid != nil {
-				userID = uid.(string)
-			}
-
-			logger.Info("HTTP request",
-				zap.String("correlation_id", correlationID),
-				zap.String("method", r.Method),
-				zap.String("path", r.URL.Path),
-				zap.Int("status", ww.statusCode),
-				zap.Duration("duration", duration),
-				zap.String("user_id", userID),
-				zap.String("user_agent", r.UserAgent()),
-				zap.String("remote_addr", r.RemoteAddr),
-			)
-		})
-	}
-}
 
 // CORSMiddleware is a mux-compatible middleware (kept for compatibility)
 func CORSMiddleware() func(http.Handler) http.Handler {
@@ -118,24 +70,7 @@ func RecoveryMiddleware(logger *zap.Logger) func(http.Handler) http.Handler {
 	}
 }
 
-// responseWriter wraps http.ResponseWriter to capture status code
-type responseWriter struct {
-	http.ResponseWriter
-	statusCode int
-}
 
-func (rw *responseWriter) WriteHeader(code int) {
-	rw.statusCode = code
-	rw.ResponseWriter.WriteHeader(code)
-}
-
-func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	hijacker, ok := rw.ResponseWriter.(http.Hijacker)
-	if !ok {
-		return nil, nil, errors.New("ResponseWriter does not implement http.Hijacker")
-	}
-	return hijacker.Hijack()
-}
 
 func writeJSONErrorResponse(w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("Content-Type", "application/json")

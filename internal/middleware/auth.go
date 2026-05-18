@@ -11,6 +11,7 @@ import (
 	"go.uber.org/zap"
 	"nvide-live/internal/domain"
 	"nvide-live/pkg/auth"
+	"nvide-live/pkg/logger"
 	"nvide-live/pkg/redis"
 )
 
@@ -89,6 +90,18 @@ func (m *AuthMiddleware) Middleware(next http.Handler) http.Handler {
 		ctx = contextWithValue(ctx, roleIDKey, claims.RoleID)
 		ctx = contextWithValue(ctx, userIDUUIDKey, userID)
 
+		// Inject claims map & logger correlation (Problem 6)
+		userClaimsMap := map[string]interface{}{
+			"user_id":   claims.UserID,
+			"username":  claims.Username,
+			"email":     claims.Email,
+			"role":      claims.Role,
+			"role_id":   claims.RoleID,
+		}
+		ctx = context.WithValue(ctx, "user_claims", userClaimsMap)
+		ctx = context.WithValue(ctx, UserClaimsKey, userClaimsMap)
+		ctx = context.WithValue(ctx, logger.UserIDKey, claims.UserID)
+
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -104,6 +117,7 @@ func hashToken(token string) string {
 type contextKey string
 
 const (
+	UserClaimsKey contextKey = "user_claims"
 	userIDKey     contextKey = "user_id"
 	usernameKey   contextKey = "username"
 	emailKey      contextKey = "email"

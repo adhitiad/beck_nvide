@@ -61,6 +61,7 @@ type WalletRepository interface {
 	DebitBalance(ctx context.Context, userID UUID, amount int64) error
 	FreezeBalance(ctx context.Context, userID UUID, amount int64) error
 	UnfreezeBalance(ctx context.Context, userID UUID, amount int64) error
+	RunInTx(ctx context.Context, fn func(ctx context.Context) error) error
 }
 
 type TransactionRepository interface {

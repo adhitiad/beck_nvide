@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -31,7 +32,9 @@ import (
 	"nvide-live/pkg/rbac"
 	"nvide-live/pkg/redis"
 	"nvide-live/pkg/storage"
+	"nvide-live/pkg/wallet"
 	"nvide-live/pkg/worker"
+	pkgLogger "nvide-live/pkg/logger"
 )
 
 func main() {
@@ -46,6 +49,12 @@ func main() {
 	// Setup logger
 	logger := setupLogger(cfg.LogLevel, cfg.LogFormat)
 	defer logger.Sync()
+
+	// Initialize global pkg/logger package (Problem 6)
+	if err := pkgLogger.InitLogger("production"); err != nil {
+		fmt.Printf("Warning: failed to initialize pkg/logger: %v\n", err)
+	}
+	defer pkgLogger.Sync()
 
 	logger.Info("Starting NVide Live Platform - Fase 5: Scaling & Optimization",
 		zap.String("version", "1.1.0"),
@@ -193,8 +202,8 @@ func main() {
 	bgWorker.Start()
 	defer bgWorker.Stop()
 
-	// Initialize user usecase
-	userUseCase := usecase.NewUserUseCase(userRepo, logger)
+	// Initialize user usecase (Fase 5: Cache & Singleflight enabled)
+	userUseCase := usecase.NewUserUseCase(userRepo, redisClient, logger)
 
 	// Initialize social usecases
 	storyUseCase := usecase.NewStoryUseCase(storyRepo, storyViewRepo, userRepo, logger)
@@ -213,7 +222,18 @@ func main() {
 			_ = trendingUseCase.RecalculateTrendingScores(context.Background())
 		}
 	}()
-	vodUseCase := usecase.NewVODUseCase(vodRepo, ffmpegSvc, localStorage, logger)
+	vodUseCase := usecase.NewVODUseCase(vodRepo, ffmpegSvc, localStorage, redisClient, workerPool, logger)
+	workerPool.RegisterHandler(worker.JobVideoTranscode, func(ctx context.Context, job *worker.Job) error {
+		var payload usecase.VODTranscodePayload
+		if err := json.Unmarshal(job.Payload, &payload); err != nil {
+			return err
+		}
+		vodID, err := domain.FromString(payload.VODID)
+		if err != nil {
+			return err
+		}
+		return vodUseCase.ProcessVideo(ctx, vodID, payload.TempFilePath, payload.OriginalFileName)
+	})
 	walletUseCase := usecase.NewWalletUseCase(walletRepo, txRepo, redisClient, logger)
 	privateChatUseCase := usecase.NewPrivateChatUsecase(privateChatRepo, userRepo, redisClient, logger)
 	giftUseCase := usecase.NewGiftUseCase(giftRepo, giftTxRepo, agencyRepo, walletUseCase, privateChatUseCase, messageRepo, chatRoomRepo, wsHub, redisClient, logger)
@@ -221,7 +241,7 @@ func main() {
 	paymentUseCase := usecase.NewPaymentUseCase(txRepo, duitkuPaymentRepo, walletUseCase, duitkuClient, redisClient, logger)
 	cryptoUseCase := usecase.NewCryptoUseCase(cryptoRepo, walletUseCase, redisClient, logger, []byte("32-byte-long-aes-key-for-crypto"))
 	paidInteractionUseCase := usecase.NewPaidInteractionUsecase(paidInteractionRepo, walletRepo, txRepo, userRepo, agencyRepo, redisClient, logger)
-	withdrawalUseCase := usecase.NewWithdrawalUsecase(withdrawalRepo, walletRepo, txRepo, agencyRepo, redisClient, logger)
+	withdrawalUseCase := usecase.NewWithdrawalUsecase(withdrawalRepo, walletRepo, txRepo, agencyRepo, userRepo, redisClient, logger)
 	bookingUseCase := usecase.NewBookingUsecase(bookingRepo, walletRepo, agencyRepo, withdrawalUseCase, redisClient, logger)
 	offerRepo := repository.NewOfferRepository(db.Pool(), logger)
 	offerUseCase := usecase.NewOfferUsecase(offerRepo, bookingRepo, bookingUseCase, walletRepo, agencyRepo, redisClient, logger)
@@ -270,6 +290,7 @@ func main() {
 
 	// WebRTC Room Manager
 	webrtcRoomManager := webrtc.NewRoomManager(logger)
+	streamUseCase.StartViewerCountSyncJob(context.Background(), webrtcRoomManager)
 
 	// Initialize handlers
 	handler := delivery.NewHandler(
@@ -308,6 +329,9 @@ func main() {
 		cfg.RateLimitWindow,
 	)
 
+	// Initialize Idempotency Manager
+	idempotencyManager := wallet.NewIdempotencyManager(redisClient, logger)
+
 	// Setup router
 	router := delivery.SetupRouter(
 		handler,
@@ -321,6 +345,7 @@ func main() {
 		authMiddleware,
 		rbacMiddleware,
 		rateLimitMiddleware,
+		idempotencyManager,
 		logger,
 	)
 
@@ -358,7 +383,23 @@ func main() {
 		logger.Error("Server forced to shutdown", zap.Error(err))
 	}
 
-	logger.Info("Server exited")
+	// 1. Drain WebSocket connections gracefully (Fase 5)
+	logger.Info("Stopping WebSocket Hub...")
+	wsHub.Stop()
+
+	// 2. Flush critical Redis caches or close cleanly
+	if redisClient != nil {
+		logger.Info("Closing Redis client...")
+		_ = redisClient.Close()
+	}
+
+	// 3. Close database pools gracefully
+	if db != nil {
+		logger.Info("Closing PostgreSQL connection pool...")
+		db.Close()
+	}
+
+	logger.Info("Server exited cleanly")
 }
 
 // setupLogger configures zap logger

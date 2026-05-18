@@ -138,3 +138,8 @@ func (uc *WalletUseCase) invalidateCache(ctx context.Context, userID domain.UUID
 		uc.redis.Del(ctx, key)
 	}
 }
+
+// RunInTx runs the given function in a transaction context
+func (uc *WalletUseCase) RunInTx(ctx context.Context, fn func(ctx context.Context) error) error {
+	return uc.walletRepo.RunInTx(ctx, fn)
+}

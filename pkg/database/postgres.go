@@ -45,10 +45,21 @@ func New(cfg *Config, logger *zap.Logger) (*DB, error) {
 		return nil, fmt.Errorf("failed to parse database config: %w", err)
 	}
 
-	poolConfig.MaxConns = int32(cfg.MaxConn)
-	poolConfig.MinConns = int32(cfg.MinConn)
+	if cfg.MaxConn > 0 {
+		poolConfig.MaxConns = int32(cfg.MaxConn)
+	} else {
+		poolConfig.MaxConns = 50
+	}
+
+	if cfg.MinConn > 0 {
+		poolConfig.MinConns = int32(cfg.MinConn)
+	} else {
+		poolConfig.MinConns = 10
+	}
+
 	poolConfig.MaxConnLifetime = time.Hour
 	poolConfig.MaxConnIdleTime = 30 * time.Minute
+	poolConfig.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeCacheDescribe
 
 	pool, err := pgxpool.NewWithConfig(context.Background(), poolConfig)
 	if err != nil {

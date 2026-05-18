@@ -26,6 +26,7 @@ func (r *likeRepository) Create(ctx context.Context, like *domain.Like) error {
 	query := `
 		INSERT INTO likes (id, user_id, content_id, content_type, created_at)
 		VALUES ($1, $2, $3, $4, NOW())
+		ON CONFLICT (user_id, content_id, content_type) DO NOTHING
 	`
 	_, err := r.db.Exec(ctx, query, like.ID, like.UserID, like.ContentID, like.ContentType)
 	if err != nil {
@@ -79,4 +80,32 @@ func (r *likeRepository) GetByUser(ctx context.Context, userID domain.UUID, limi
 		likes = append(likes, like)
 	}
 	return likes, nil
+}
+
+// BatchCreate inserts multiple likes in a single transaction for Redis sync performance
+func (r *likeRepository) BatchCreate(ctx context.Context, likes []*domain.Like) error {
+	if len(likes) == 0 {
+		return nil
+	}
+
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	query := `
+		INSERT INTO likes (id, user_id, content_id, content_type, created_at)
+		VALUES ($1, $2, $3, $4, NOW())
+		ON CONFLICT (user_id, content_id, content_type) DO NOTHING
+	`
+
+	for _, like := range likes {
+		_, err := tx.Exec(ctx, query, like.ID, like.UserID, like.ContentID, like.ContentType)
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit(ctx)
 }

@@ -4,16 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"runtime"
 	"strconv"
 	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	gorilla_ws "github.com/gorilla/websocket"
 	"nvide-live/internal/domain"
 	"nvide-live/pkg/broker"
 	"nvide-live/pkg/redis"
 
-	goredis "github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 )
 
@@ -58,8 +59,8 @@ func NewHub(db *pgxpool.Pool, b broker.Broker, r *redis.Client, logger *zap.Logg
 		clients:      make(map[*Client]bool),
 		rooms:        make(map[string]map[*Client]bool),
 		broadcast:    make(chan *WSMessage),
-		register:     make(chan *Client),
-		unregister:   make(chan *Client),
+		register:     make(chan *Client, 1024),
+		unregister:   make(chan *Client, 1024),
 		roomSettings: make(map[string]*RoomSettings),
 		db:           db,
 		broker:       b,
@@ -101,6 +102,14 @@ func (h *Hub) Run() {
 					delete(h.rooms[client.roomID], client)
 					if len(h.rooms[client.roomID]) == 0 {
 						delete(h.rooms, client.roomID)
+						delete(h.roomSettings, client.roomID) // Prevent room settings memory leak!
+						
+						// Periodic force GC asynchronously after stream/room end
+						go func(rid string) {
+							time.Sleep(3 * time.Second)
+							h.logger.Info("Forcing garbage collection to free memory after room end", zap.String("room_id", rid))
+							runtime.GC()
+						}(client.roomID)
 					}
 				}
 				// Emit leave message
@@ -158,9 +167,11 @@ func (h *Hub) Run() {
 				continue
 			}
 
-			// 5. Rate limit check (general anti-spam)
-			if h.isRateLimited(message.UserID, message.RoomID) {
+			// 5. Rate limit check (Token Bucket via Redis Lua script)
+			limited, retryAfter := h.checkTokenBucketRateLimit(message.UserID, message.RoomID)
+			if limited {
 				h.logger.Warn("User rate limited", zap.String("user_id", message.UserID), zap.String("room_id", message.RoomID))
+				h.sendPrivateErrorWithRetry(message.UserID, message.RoomID, "429", "Rate limit exceeded. Please wait.", retryAfter)
 				continue
 			}
 
@@ -283,37 +294,64 @@ func (h *Hub) emitSystemMessage(roomID string, content string) {
 	h.broker.Publish(context.Background(), "room:"+roomID, string(msgBytes))
 }
 
-// isRateLimited checks if a user has exceeded 3 msgs/second in a room
-// Using Redis Sliding Window rate limiting
-func (h *Hub) isRateLimited(userID, roomID string) bool {
+// checkTokenBucketRateLimit checks if a user has exceeded 3 msgs/second in a room
+// Using an atomic Redis Lua Script Token Bucket algorithm
+func (h *Hub) checkTokenBucketRateLimit(userID, roomID string) (bool, float64) {
 	if h.redisClient == nil || userID == "" {
-		return false
+		return false, 0
 	}
 	ctx := context.Background()
 	key := fmt.Sprintf("ratelimit:ws:%s:%s", roomID, userID)
-	now := time.Now().UnixNano()
-	windowStart := now - time.Second.Nanoseconds()
+	
+	// Token Bucket LUA script
+	// ARGV[1] = limit/capacity (3), ARGV[2] = current unix timestamp
+	luaScript := `
+		local key = KEYS[1]
+		local limit = tonumber(ARGV[1])
+		local current_time = tonumber(ARGV[2])
+		local fill_rate = limit
+		local capacity = limit
 
-	// ZREMRANGEBYSCORE key -inf windowStart
-	h.redisClient.GetClient().ZRemRangeByScore(ctx, key, "-inf", fmt.Sprintf("%d", windowStart))
+		local data = redis.call('HMGET', key, 'tokens', 'last_updated')
+		local tokens = tonumber(data[1])
+		local last_updated = tonumber(data[2])
 
-	// ZCOUNT key -inf +inf
-	count, err := h.redisClient.GetClient().ZCard(ctx, key).Result()
+		if not tokens then
+			tokens = capacity
+			last_updated = current_time
+		else
+			local elapsed = math.max(0, current_time - last_updated)
+			tokens = math.min(capacity, tokens + elapsed * fill_rate)
+		end
+
+		if tokens < 1 then
+			local retry_after = (1 - tokens) / fill_rate
+			return {0, tostring(retry_after)}
+		else
+			tokens = tokens - 1
+			redis.call('HMSET', key, 'tokens', tokens, 'last_updated', current_time)
+			redis.call('EXPIRE', key, 2)
+			return {1, "0"}
+		end
+	`
+
+	nowSec := float64(time.Now().UnixNano()) / 1e9
+	res, err := h.redisClient.GetClient().Eval(ctx, luaScript, []string{key}, 3, nowSec).Result()
 	if err != nil {
-		h.logger.Error("Redis ZCard error", zap.Error(err))
-		return false // Fail open
+		h.logger.Error("Token Bucket Lua eval error", zap.Error(err))
+		return false, 0 // Fail open
 	}
 
-	if count >= 3 {
-		return true // Rate limited
+	slice, ok := res.([]interface{})
+	if !ok || len(slice) < 2 {
+		return false, 0
 	}
 
-	// ZADD key now now
-	h.redisClient.GetClient().ZAdd(ctx, key, goredis.Z{Score: float64(now), Member: now})
-	// Expire to cleanup memory automatically
-	h.redisClient.GetClient().Expire(ctx, key, 2*time.Second)
+	allowed := slice[0].(int64)
+	retryAfterStr := slice[1].(string)
+	retryAfter, _ := strconv.ParseFloat(retryAfterStr, 64)
 
-	return false
+	return allowed == 0, retryAfter
 }
 
 // BroadcastToRoom sends raw bytes to all clients in a specific room via the broker
@@ -410,12 +448,21 @@ func (h *Hub) getUserLevelAndColor(userID string) (int, string) {
 }
 
 func (h *Hub) sendPrivateError(userID, roomID, code, message string) {
+	h.sendPrivateErrorWithRetry(userID, roomID, code, message, 0)
+}
+
+func (h *Hub) sendPrivateErrorWithRetry(userID, roomID, code, message string, retryAfter float64) {
+	payloadMap := map[string]interface{}{
+		"code":    code,
+		"message": message,
+	}
+	if retryAfter > 0 {
+		payloadMap["retry_after"] = retryAfter
+	}
+
 	errPayload := map[string]interface{}{
-		"type": "error",
-		"payload": map[string]interface{}{
-			"code":    code,
-			"message": message,
-		},
+		"type":      "error",
+		"payload":   payloadMap,
 		"timestamp": time.Now().Format(time.RFC3339),
 	}
 	msgBytes, _ := json.Marshal(errPayload)
@@ -534,4 +581,27 @@ func (h *Hub) executeModeratorCommand(message *WSMessage, settings *RoomSettings
 		}
 		h.broadcastToRoomRaw(message.RoomID, broadcastMsg)
 	}
+}
+
+// Stop shuts down the hub and disconnects all clients gracefully (Fase 5)
+func (h *Hub) Stop() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.logger.Info("Shutting down WebSocket Hub, draining active clients...", zap.Int("active_clients", len(h.clients)))
+	for client := range h.clients {
+		// Send a clean WS close control message
+		_ = client.conn.WriteControl(
+			gorilla_ws.CloseMessage,
+			gorilla_ws.FormatCloseMessage(gorilla_ws.CloseNormalClosure, "Server shutting down gracefully"),
+			time.Now().Add(1*time.Second),
+		)
+		client.conn.Close()
+		delete(h.clients, client)
+	}
+
+	// Reset rooms and settings maps
+	h.rooms = make(map[string]map[*Client]bool)
+	h.roomSettings = make(map[string]*RoomSettings)
+	h.logger.Info("WebSocket Hub drained and stopped successfully")
 }

@@ -13,9 +13,11 @@ type Comment struct {
 	ContentType string    `json:"content_type" db:"content_type"`     // "stream", "vod", "story"
 	ParentID    *UUID     `json:"parent_id,omitempty" db:"parent_id"` // For nested comments (1 level)
 	Content     string    `json:"content" db:"content"`
+	Text        string    `json:"text" db:"text"`
 	LikeCount   int       `json:"like_count" db:"like_count"`
 	CreatedAt   time.Time `json:"created_at" db:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at" db:"updated_at"`
+	IsDeleted   bool      `json:"is_deleted" db:"is_deleted"`
 
 	// Relations
 	User    *User      `json:"user,omitempty"`

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"go.uber.org/zap"
+	"golang.org/x/sync/singleflight"
 
 	"nvide-live/internal/domain"
 	"nvide-live/internal/websocket"
@@ -24,6 +25,7 @@ type GiftUseCase struct {
 	wsHub       *websocket.Hub
 	redis       *redis.Client
 	logger      *zap.Logger
+	sf          singleflight.Group
 }
 
 func NewGiftUseCase(
@@ -54,7 +56,19 @@ func NewGiftUseCase(
 
 // SendGift processes a gift send with revenue split and WS broadcast
 func (uc *GiftUseCase) SendGift(ctx context.Context, senderID, receiverID domain.UUID, roomID *domain.UUID, giftID domain.UUID, quantity int) (*domain.GiftTransaction, error) {
-	// 1. Get gift details
+	// 1. Gift rate limiting (50 per menit per user per stream)
+	if roomID != nil && uc.redis != nil {
+		rateLimitKey := fmt.Sprintf("gift:rate_limit:%s:%s", roomID.String(), senderID.String())
+		count, _ := uc.redis.GetClient().Incr(ctx, rateLimitKey).Result()
+		if count == 1 {
+			uc.redis.GetClient().Expire(ctx, rateLimitKey, 1*time.Minute)
+		}
+		if count > 50 {
+			return nil, domain.NewDomainError(domain.ErrCodeValidation, "batas pengiriman gift (50 per menit) terlampaui", nil)
+		}
+	}
+
+	// 2. Fetch active gift details outside tx first for fast check
 	gift, err := uc.giftRepo.GetByID(ctx, giftID)
 	if err != nil {
 		return nil, err
@@ -66,61 +80,92 @@ func (uc *GiftUseCase) SendGift(ctx context.Context, senderID, receiverID domain
 	totalPrice := gift.Price * int64(quantity)
 	idempotencyKey := fmt.Sprintf("gift:%s:%s:%s:%d", senderID.String(), giftID.String(), time.Now().Format("20060102150405"), quantity)
 
-	// 2. Debit sender wallet
-	if err := uc.walletUC.DebitWallet(ctx, senderID, totalPrice, domain.TxTypeGiftSent, idempotencyKey); err != nil {
+	// 3. Process Gift mutasi with up to 3x retry on SQL transaction locks
+	var gtx *domain.GiftTransaction
+	var streamID *domain.UUID
+	for i := 0; i < 3; i++ {
+		err = uc.walletUC.RunInTx(ctx, func(txCtx context.Context) error {
+			// Get gift under locked transaction (or normal query depending on driver)
+			g, err := uc.giftRepo.GetByID(txCtx, giftID)
+			if err != nil {
+				return err
+			}
+			if !g.IsActive {
+				return domain.NewDomainError(domain.ErrCodeValidation, "gift is not active", nil)
+			}
+
+			// Debit sender wallet (SELECT FOR UPDATE executed inside DebitWallet)
+			if err := uc.walletUC.DebitWallet(txCtx, senderID, totalPrice, domain.TxTypeGiftSent, idempotencyKey); err != nil {
+				return err
+			}
+
+			// Determine revenue split
+			hasAgency := false
+			var agencyID *domain.UUID
+			agencyCommissionRate := 25
+			agencyRelation, err := uc.agencyRepo.GetHostRelation(txCtx, receiverID)
+			if err == nil && agencyRelation != nil && agencyRelation.Status == domain.AgencyHostActive {
+				hasAgency = true
+				agencyID = &agencyRelation.AgencyID
+				agency, _ := uc.agencyRepo.GetByID(txCtx, agencyRelation.AgencyID)
+				if agency != nil {
+					agencyCommissionRate = agency.CommissionRate
+				}
+			}
+
+			split := CalculateRevenueSplit(totalPrice, hasAgency, agencyCommissionRate)
+
+			// Credit receiver (host) wallet
+			if err := uc.walletUC.CreditWallet(txCtx, receiverID, split.HostEarning, domain.TxTypeHostEarning, idempotencyKey+":host"); err != nil {
+				return err
+			}
+
+			// Credit agency owner wallet if applicable
+			if hasAgency && agencyID != nil {
+				agency, _ := uc.agencyRepo.GetByID(txCtx, *agencyID)
+				if agency != nil {
+					if err := uc.walletUC.CreditWallet(txCtx, agency.OwnerID, split.AgencyCommission, domain.TxTypeAgencyCommission, idempotencyKey+":agency"); err != nil {
+						return err
+					}
+				}
+			}
+
+			// Record gift transaction
+			if roomID != nil {
+				room, err := uc.chatRepo.GetByID(txCtx, *roomID)
+				if err == nil && room.Type == "stream" {
+					streamID = room.TargetID
+				}
+			}
+
+			gtx = &domain.GiftTransaction{
+				ID:               domain.NewUUIDv7(),
+				StreamID:         streamID,
+				SenderID:         senderID,
+				ReceiverID:       receiverID,
+				GiftID:           giftID,
+				Quantity:         quantity,
+				TotalPrice:       totalPrice,
+				AgencyID:         agencyID,
+				AgencyCommission: split.AgencyCommission,
+				HostEarning:      split.HostEarning,
+				PlatformFee:      split.PlatformFee,
+			}
+			return uc.giftTxRepo.Create(txCtx, gtx)
+		})
+
+		if err == nil {
+			break
+		}
+		// Concurrent conflict: pause slightly before retrying
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	if err != nil {
 		return nil, err
 	}
 
-	// 3. Determine revenue split
-	hasAgency := false
-	var agencyID *domain.UUID
-	agencyCommissionRate := 25 
-	agencyRelation, err := uc.agencyRepo.GetHostRelation(ctx, receiverID)
-	if err == nil && agencyRelation != nil {
-		hasAgency = true
-		agencyID = &agencyRelation.AgencyID
-		agency, _ := uc.agencyRepo.GetByID(ctx, agencyRelation.AgencyID)
-		if agency != nil {
-			agencyCommissionRate = agency.CommissionRate
-		}
-	}
-
-	split := CalculateRevenueSplit(totalPrice, hasAgency, agencyCommissionRate)
-
-	// 4. Credit receiver (host) & agency
-	uc.walletUC.CreditWallet(ctx, receiverID, split.HostEarning, domain.TxTypeHostEarning, idempotencyKey+":host")
-	if hasAgency && agencyID != nil {
-		agency, _ := uc.agencyRepo.GetByID(ctx, *agencyID)
-		if agency != nil {
-			uc.walletUC.CreditWallet(ctx, agency.OwnerID, split.AgencyCommission, domain.TxTypeAgencyCommission, idempotencyKey+":agency")
-		}
-	}
-
-	// 5. Record gift transaction
-	var streamID *domain.UUID
-	if roomID != nil {
-		room, err := uc.chatRepo.GetByID(ctx, *roomID)
-		if err == nil && room.Type == "stream" {
-			streamID = room.TargetID
-		}
-	}
-
-	gtx := &domain.GiftTransaction{
-		ID:               domain.NewUUID(),
-		StreamID:         streamID,
-		SenderID:         senderID,
-		ReceiverID:       receiverID,
-		GiftID:           giftID,
-		Quantity:         quantity,
-		TotalPrice:       totalPrice,
-		AgencyID:         agencyID,
-		AgencyCommission: split.AgencyCommission,
-		HostEarning:      split.HostEarning,
-		PlatformFee:      split.PlatformFee,
-	}
-	_ = uc.giftTxRepo.Create(ctx, gtx)
-
-	// 6. Combo & PK Battle Calculations
+	// 4. Combo & PK Battle Calculations
 	comboCount := int64(1)
 	comboTier := 1
 	isPKVote := false
@@ -234,9 +279,44 @@ func (uc *GiftUseCase) SendPrivateGift(ctx context.Context, senderID, convID dom
 	return uc.SendGift(ctx, senderID, receiverID, &convID, giftID, quantity)
 }
 
-// GetGiftCatalog returns active gifts
+// GetGiftCatalog returns active gifts (Cached for 24 hours with Cache Stampede prevention)
 func (uc *GiftUseCase) GetGiftCatalog(ctx context.Context) ([]*domain.Gift, error) {
-	return uc.giftRepo.ListActive(ctx)
+	cacheKey := "gift:catalog:active"
+
+	// 1. Try cache first
+	if uc.redis != nil {
+		cached, err := uc.redis.Get(ctx, cacheKey)
+		if err == nil && cached != "" {
+			var catalog []*domain.Gift
+			if err := json.Unmarshal([]byte(cached), &catalog); err == nil {
+				return catalog, nil
+			}
+		}
+	}
+
+	// 2. Singleflight cache stampede protection
+	val, err, _ := uc.sf.Do(cacheKey, func() (interface{}, error) {
+		catalog, err := uc.giftRepo.ListActive(ctx)
+		if err != nil {
+			return nil, err
+		}
+
+		// Save to cache (24 hours TTL)
+		if uc.redis != nil {
+			data, err := json.Marshal(catalog)
+			if err == nil {
+				_ = uc.redis.Set(ctx, cacheKey, string(data), 24*time.Hour)
+			}
+		}
+
+		return catalog, nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return val.([]*domain.Gift), nil
 }
 
 // GetLeaderboard returns top 10 gifters for a stream

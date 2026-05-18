@@ -3,6 +3,7 @@ package webrtc
 import (
 	"encoding/json"
 	"sync"
+	"time"
 
 	"github.com/pion/webrtc/v4"
 	"go.uber.org/zap"
@@ -192,6 +193,19 @@ func (m *RoomManager) HandleHostConnection(roomID, peerID string, sendChan chan 
 		}
 	})
 
+	// 30 seconds signaling timeout step
+	go func(peer *PeerState) {
+		time.Sleep(30 * time.Second)
+		peer.mu.Lock()
+		defer peer.mu.Unlock()
+		if !peer.RemoteDescSet {
+			m.logger.Warn("Signaling timeout reached: Remote description not set within 30 seconds. Closing peer connection.", zap.String("peer_id", peer.ID))
+			if peer.Connection != nil {
+				_ = peer.Connection.Close()
+			}
+		}
+	}(hostPeer)
+
 	return hostPeer, nil
 }
 
@@ -243,6 +257,19 @@ func (m *RoomManager) HandleViewerConnection(roomID, peerID string, sendChan cha
 			Data:   data,
 		}
 	})
+
+	// 30 seconds signaling timeout step
+	go func(peer *PeerState) {
+		time.Sleep(30 * time.Second)
+		peer.mu.Lock()
+		defer peer.mu.Unlock()
+		if !peer.RemoteDescSet {
+			m.logger.Warn("Signaling timeout reached: Remote description not set within 30 seconds. Closing peer connection.", zap.String("peer_id", peer.ID))
+			if peer.Connection != nil {
+				_ = peer.Connection.Close()
+			}
+		}
+	}(viewerPeer)
 
 	return viewerPeer, nil
 }
@@ -357,4 +384,19 @@ func (m *RoomManager) ProcessSignaling(roomID, peerID string, msg SignalingMessa
 		}
 	}
 	return nil
+}
+
+// GetViewerCount returns the actual number of active viewers in a room
+func (m *RoomManager) GetViewerCount(roomID string) int {
+	m.mu.Lock()
+	room, exists := m.rooms[roomID]
+	m.mu.Unlock()
+
+	if !exists {
+		return 0
+	}
+
+	room.mu.Lock()
+	defer room.mu.Unlock()
+	return len(room.Viewers)
 }

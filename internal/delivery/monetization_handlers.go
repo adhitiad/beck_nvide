@@ -410,31 +410,49 @@ func (h *MonetizationHandler) RequestWithdrawal(w http.ResponseWriter, r *http.R
 }
 
 func (h *MonetizationHandler) ApproveWithdrawal(w http.ResponseWriter, r *http.Request) {
+	adminID, ok := h.getUserID(r)
+	if !ok {
+		h.writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Admin not authenticated")
+		return
+	}
+
 	vars := mux.Vars(r)
 	txID, err := domain.FromString(vars["tx_id"])
 	if err != nil {
 		h.writeError(w, http.StatusBadRequest, "INVALID_TX_ID", "Invalid transaction ID")
 		return
 	}
-	if err := h.paymentUC.ApproveWithdrawal(r.Context(), txID); err != nil {
+	if err := h.withdrawalUC.ApproveWithdrawal(r.Context(), adminID, txID); err != nil {
 		h.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
-	h.writeJSON(w, http.StatusOK, map[string]string{"message": "Withdrawal approved"})
+	h.writeJSON(w, http.StatusOK, map[string]string{"message": "Withdrawal approved successfully"})
 }
 
 func (h *MonetizationHandler) RejectWithdrawal(w http.ResponseWriter, r *http.Request) {
+	adminID, ok := h.getUserID(r)
+	if !ok {
+		h.writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Admin not authenticated")
+		return
+	}
+
 	vars := mux.Vars(r)
 	txID, err := domain.FromString(vars["tx_id"])
 	if err != nil {
 		h.writeError(w, http.StatusBadRequest, "INVALID_TX_ID", "Invalid transaction ID")
 		return
 	}
-	if err := h.paymentUC.RejectWithdrawal(r.Context(), txID); err != nil {
+
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	if err := h.withdrawalUC.RejectWithdrawal(r.Context(), adminID, txID, req.Reason); err != nil {
 		h.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
-	h.writeJSON(w, http.StatusOK, map[string]string{"message": "Withdrawal rejected"})
+	h.writeJSON(w, http.StatusOK, map[string]string{"message": "Withdrawal rejected successfully"})
 }
 
 // ===== NEW WITHDRAWAL FEE ENGINE =====
