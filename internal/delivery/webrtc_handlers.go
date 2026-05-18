@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -561,14 +562,57 @@ func (h *WebRTCHandler) EndStream(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusOK, map[string]string{"message": "Stream ended"})
 }
 
-// GetLiveStreams lists all live streams
+// GetLiveStreams lists all live streams with search, pagination, and category filtering
 func (h *WebRTCHandler) GetLiveStreams(w http.ResponseWriter, r *http.Request) {
-	streams, err := h.streamUseCase.GetLiveStreams(r.Context(), 10, 0)
+	// Parse pagination parameters
+	limit := 10
+	offset := 0
+	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
+		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
+			limit = l
+		}
+	}
+	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
+		if o, err := strconv.Atoi(offsetStr); err == nil && o >= 0 {
+			offset = o
+		}
+	}
+
+	search := strings.ToLower(r.URL.Query().Get("search"))
+	category := strings.ToLower(r.URL.Query().Get("category"))
+
+	// We fetch a larger pool to support in-memory filtering correctly, e.g., 100 streams
+	rawStreams, err := h.streamUseCase.GetLiveStreams(r.Context(), 100, 0)
 	if err != nil {
 		h.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
 		return
 	}
-	h.writeJSON(w, http.StatusOK, streams)
+
+	filteredStreams := make([]*domain.Stream, 0)
+	for _, s := range rawStreams {
+		// Category check
+		if category != "" && strings.ToLower(s.Category) != category {
+			continue
+		}
+		// Search query check (title or description)
+		if search != "" && !strings.Contains(strings.ToLower(s.Title), search) && !strings.Contains(strings.ToLower(s.Description), search) {
+			continue
+		}
+		filteredStreams = append(filteredStreams, s)
+	}
+
+	// Apply pagination on filtered list
+	total := len(filteredStreams)
+	start := offset
+	if start > total {
+		start = total
+	}
+	end := start + limit
+	if end > total {
+		end = total
+	}
+
+	h.writeJSON(w, http.StatusOK, filteredStreams[start:end])
 }
 
 // GetStream handles fetching a single stream by ID

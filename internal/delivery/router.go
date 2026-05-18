@@ -151,7 +151,7 @@ func SetupRouter(
 
 	// WebSocket routes (Chat & Call)
 	router.HandleFunc("/ws/rooms/{room_id}", handler.ServeWS).Methods("GET")
-	router.HandleFunc("/ws/chat/{conversation_id}", handler.ServeChatWS).Methods("GET")
+	router.HandleFunc("/ws/chat/{stream_id}", handler.ServeStreamChatWS).Methods("GET")
 	router.HandleFunc("/ws/call/{session_id}", handler.ServeCallWS).Methods("GET")
 
 	// WebRTC Signaling (WebSocket)
@@ -163,10 +163,11 @@ func SetupRouter(
 	// Stream Management (Protected)
 	protected.HandleFunc("/streams", webrtcHandler.CreateStream).Methods("POST")
 	protected.HandleFunc("/streams/{stream_id}/start", webrtcHandler.StartStream).Methods("POST")
-	protected.HandleFunc("/streams/{stream_id}/end", webrtcHandler.EndStream).Methods("POST")
+	protected.HandleFunc("/streams/{stream_id}/end", webrtcHandler.EndStream).Methods("POST", "PUT")
 	protected.HandleFunc("/streams/{stream_id}/mode", webrtcHandler.SwitchRoomMode).Methods("PATCH")
 	
 	// Public Stream Routes
+	apiV1.HandleFunc("/streams", webrtcHandler.GetLiveStreams).Methods("GET")
 	apiV1.HandleFunc("/streams/live", webrtcHandler.GetLiveStreams).Methods("GET")
 	apiV1.HandleFunc("/streams/trending", webrtcHandler.GetTrendingStreams).Methods("GET")
 	apiV1.HandleFunc("/vods", vodHandler.GetVODList).Methods("GET")

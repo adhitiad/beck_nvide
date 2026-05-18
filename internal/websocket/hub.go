@@ -232,6 +232,23 @@ func (h *Hub) Run() {
 				var displayName string
 				_ = h.db.QueryRow(context.Background(), "SELECT username FROM users WHERE id = $1", message.UserID).Scan(&displayName)
 
+				// Simpan pesan ke tabel comments (migrasi 003_social_features.sql)
+				if ok {
+					uID, errUser := domain.FromString(message.UserID)
+					rID, errRoom := domain.FromString(message.RoomID)
+					if errUser == nil && errRoom == nil {
+						commentID := domain.NewUUID()
+						_, errDb := h.db.Exec(context.Background(),
+							"INSERT INTO comments (id, user_id, content_id, content_type, content, created_at, updated_at) VALUES ($1, $2, $3, 'stream', $4, NOW(), NOW())",
+							commentID, uID, rID, chatText)
+						if errDb != nil {
+							h.logger.Error("Failed to save comment to database", zap.Error(errDb))
+						} else {
+							h.logger.Debug("Comment saved to database", zap.String("comment_id", commentID.String()))
+						}
+					}
+				}
+
 				enrichedPayload := map[string]interface{}{
 					"user_id":      message.UserID,
 					"username":     displayName,
@@ -604,4 +621,12 @@ func (h *Hub) Stop() {
 	h.rooms = make(map[string]map[*Client]bool)
 	h.roomSettings = make(map[string]*RoomSettings)
 	h.logger.Info("WebSocket Hub drained and stopped successfully")
+}
+
+// IsStreamRoom checks if a room ID belongs to a live stream
+func (h *Hub) IsStreamRoom(roomID string) bool {
+	var exists bool
+	query := "SELECT EXISTS(SELECT 1 FROM streams WHERE id = $1 OR room_id = $1 OR room_id::text = $1)"
+	err := h.db.QueryRow(context.Background(), query, roomID).Scan(&exists)
+	return err == nil && exists
 }
