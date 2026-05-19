@@ -154,7 +154,98 @@ func Load() *Config {
 	cfg.RedisDB = getEnvInt("REDIS_DB", 0)
 	cfg.RedisPoolSize = getEnvInt("REDIS_POOL_SIZE", 10)
 
-	// JWT — F-012 / F-003 guard: fail fast if JWT_SECRET is absent or still a known placeholder
+// Load loads configuration from environment variables
+func Load() *Config {
+	cfg := &Config{}
+
+	// Helper to get env with default
+	getEnv := func(key, defaultValue string) string {
+		if value := os.Getenv(key); value != "" {
+			return value
+		}
+		return defaultValue
+	}
+
+	// Helper to get env as int
+	getEnvInt := func(key string, defaultValue int) int {
+		if value := os.Getenv(key); value != "" {
+			if intVal, err := strconv.Atoi(value); err == nil {
+				return intVal
+			}
+		}
+		return defaultValue
+	}
+
+	// Helper to get env as bool
+	getEnvBool := func(key string, defaultValue bool) bool {
+		if value := os.Getenv(key); value != "" {
+			if boolVal, err := strconv.ParseBool(value); err == nil {
+				return boolVal
+			}
+		}
+		return defaultValue
+	}
+
+	// Helper to get env as duration
+	getEnvDuration := func(key string, defaultValue time.Duration) time.Duration {
+		if value := os.Getenv(key); value != "" {
+			if durationVal, err := time.ParseDuration(value); err == nil {
+				return durationVal
+			}
+		}
+		return defaultValue
+	}
+
+	// Helper: isStillPlaceholder detects common placeholder/example values
+	isStillPlaceholder := func(val string) bool {
+		upper := strings.ToUpper(val)
+		for _, p := range []string{"REPLACE_WITH", "GENERATE_", "YOUR_", "CHANGE_THIS",
+			"CHANGE-ME-IN-PRODUCTION", "CHANGE-THIS-SUPER-SECRET-KEY"} {
+			if strings.Contains(upper, p) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Server
+	cfg.ServerPort = getEnv("SERVER_PORT", "8080")
+	cfg.ServerHost = getEnv("SERVER_HOST", "0.0.0.0")
+	cfg.GracefulTimeout = getEnvDuration("GRACEFUL_TIMEOUT", 30*time.Second)
+
+	// Database
+	cfg.DATABASE_URL = getEnv("DATABASE_URL", "")
+	cfg.DBHost = getEnv("DB_HOST", "localhost")
+	cfg.DBPort = getEnv("DB_PORT", "5432")
+	cfg.DBUser = getEnv("DB_USER", "postgres")
+	cfg.DBPassword = getEnv("DB_PASSWORD", "postgres")
+	cfg.DBName = getEnv("DB_NAME", "nvide_live")
+	cfg.DBSSLMode = getEnv("DB_SSLMODE", "disable")
+	cfg.DBMaxConn = getEnvInt("DB_MAX_CONN", 20)
+	cfg.DBMinConn = getEnvInt("DB_MIN_CONN", 5)
+
+	// Hard-fail if neither DATABASE_URL nor all DB_* components are properly configured
+	dbURLSet := cfg.DATABASE_URL != ""
+	dbComponentsAllSet := cfg.DBHost != "" &&
+		cfg.DBUser != "" &&
+		cfg.DBPassword != "" &&
+		cfg.DBName != "" &&
+		!isStillPlaceholder(cfg.DBHost) &&
+		!isStillPlaceholder(cfg.DBUser) &&
+		!isStillPlaceholder(cfg.DBPassword)
+
+	if !dbURLSet && !dbComponentsAllSet {
+		fmt.Fprintf(os.Stderr, "[FATAL] No database configuration found. Set DATABASE_URL or provide all of DB_HOST, DB_USER, DB_PASSWORD, DB_NAME\n")
+		os.Exit(1)
+	}
+
+	// Redis
+	cfg.RedisAddr = getEnv("REDIS_ADDR", "localhost:6379")
+	cfg.RedisPassword = getEnv("REDIS_PASSWORD", "")
+	cfg.RedisDB = getEnvInt("REDIS_DB", 0)
+	cfg.RedisPoolSize = getEnvInt("REDIS_POOL_SIZE", 10)
+
+	// JWT — F-012 guard: fail fast if JWT_SECRET is absent or still a known placeholder
 	cfg.JWTSecret = getEnv("JWT_SECRET", "")
 	const jwttPlaceholder = "change-this-super-secret-key-in-production-use-random-256-bit"
 	const jwttPlaceholderOld = "change-me-in-production"
@@ -162,12 +253,51 @@ func Load() *Config {
 	cfg.RefreshTokenExpiry = getEnvDuration("REFRESH_TOKEN_EXPIRY", 168*time.Hour)
 	if cfg.JWTSecret == "" || cfg.JWTSecret == jwttPlaceholder || cfg.JWTSecret == jwttPlaceholderOld {
 		fmt.Fprintf(os.Stderr, "[FATAL] JWT_SECRET is not set or still contains the default placeholder value — generate a 64+ character random string and set it via the JWT_SECRET environment variable before starting the server\n")
-		_ = getEnv // keep helper alive for linters
-		_ = getEnvInt
-		_ = getEnvBool
-		_ = getEnvDuration
 		os.Exit(1)
 	}
+
+	// Bcrypt
+	cfg.BcryptCost = getEnvInt("BCRYPT_COST", 12)
+
+	// Rate Limiting
+	cfg.RateLimitEnabled = getEnvBool("RATE_LIMIT_ENABLED", true)
+	cfg.RateLimitRequests = getEnvInt("RATE_LIMIT_REQUESTS", 100)
+	cfg.RateLimitWindow = getEnvDuration("RATE_LIMIT_WINDOW", 1*time.Minute)
+
+	// Logging
+	cfg.LogLevel = getEnv("LOG_LEVEL", "info")
+	cfg.LogFormat = getEnv("LOG_FORMAT", "json")
+
+	// Duitku
+	cfg.DuitkuMerchantCode = getEnv("DUITKU_MERCHANT_CODE", "")
+	cfg.DuitkuAPIKey = getEnv("DUITKU_API_KEY", "")
+	cfg.DuitkuBaseURL = getEnv("DUITKU_BASE_URL", "https://sandbox.duitku.com")
+	cfg.DuitkuCallbackURL = getEnv("DUITKU_CALLBACK_URL", "")
+	cfg.DuitkuReturnURL = getEnv("DUITKU_RETURN_URL", "")
+
+	// OpenAI (AI monetisation / chat)
+	cfg.OpenAIAPIKey = getEnv("OPENAI_API_KEY", "")
+
+	// Crypto & Blockchain
+	cfg.CryptoEncryptionKey = getEnv("CRYPTO_ENCRYPTION_KEY", "32-byte-long-aes-key-for-crypto")
+	cfg.SolanaRPCURL = getEnv("SOLANA_RPC_URL", "https://api.devnet.solana.com")
+	cfg.USDTRPCURL = getEnv("USDT_RPC_URL", "https://data-seed-prebsc-1-s1.binance.org:8545")
+	cfg.BTCRPCURL = getEnv("BTC_RPC_URL", "https://api.blockcypher.com/v1/btc/test3")
+
+	// KYC Region Restriction
+	cfg.AllowedRegions = getEnv("ALLOWED_REGIONS", "indonesia,philippines,filipina,thailand,malaysia,myanmar,cambodia,kamboja,vietnam,brazil,china,tiongkok,japan,jepang,india,kazakhstan")
+	cfg.MicroDepositVerifyEnabled = getEnvBool("MICRO_DEPOSIT_VERIFY_ENABLED", false)
+	cfg.VAPIDPublicKey = getEnv("VAPID_PUBLIC_KEY", "")
+	cfg.VAPIDPrivateKey = getEnv("VAPID_PRIVATE_KEY", "")
+	cfg.VAPIDSubject = getEnv("VAPID_SUBJECT", "mailto:admin@nvide.live")
+
+	// Mux Streaming
+	cfg.MuxTokenID = getEnv("MUX_TOKEN_ID", "")
+	cfg.MuxTokenSecret = getEnv("MUX_TOKEN_SECRET", "")
+
+	globalConfig = cfg
+	return cfg
+}
 
 	// Bcrypt
 	cfg.BcryptCost = getEnvInt("BCRYPT_COST", 12)
