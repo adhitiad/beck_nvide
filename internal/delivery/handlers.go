@@ -930,28 +930,23 @@ func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusOK, toUserDTO(user))
 }
 
-// writeJSON writes JSON response
+// writeJSON writes a standardized JSON envelope response (delegates to shared middleware helper)
 func (h *Handler) writeJSON(w http.ResponseWriter, status int, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(data)
+	middleware.WriteJSON(w, status, data)
 }
 
-// writeError writes error response in standard format
+// writeError writes a standardised JSON error response (delegates to shared middleware helper)
 func (h *Handler) writeError(w http.ResponseWriter, status int, code, message string) {
-	h.writeJSON(w, status, map[string]string{
-		"error":   code,
-		"message": message,
-	})
+	middleware.WriteJSONError(w, status, code, message)
 }
 
-// writeErrorLocalized writes a localized error response
+// writeErrorLocalized writes a localized error response using the shared envelope
 func (h *Handler) writeErrorLocalized(ctx context.Context, w http.ResponseWriter, status int, code, translationKey string, defaultMessage string) {
 	msg := middleware.T(ctx, translationKey)
-	if msg == translationKey { // translation key not found, fallback to defaultMessage
+	if msg == translationKey {
 		msg = defaultMessage
 	}
-	h.writeError(w, status, code, msg)
+	middleware.WriteJSONError(w, status, code, msg)
 }
 
 // handleError handles domain errors and converts to HTTP response
