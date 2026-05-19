@@ -53,6 +53,25 @@ type Config struct {
 	DuitkuBaseURL      string `env:"DUITKU_BASE_URL" default:"https://sandbox.duitku.com"`
 	DuitkuCallbackURL  string `env:"DUITKU_CALLBACK_URL"`
 	DuitkuReturnURL    string `env:"DUITKU_RETURN_URL"`
+
+	// Crypto and Blockchain Configurations
+	CryptoEncryptionKey string `env:"CRYPTO_ENCRYPTION_KEY" default:"32-byte-long-aes-key-for-crypto"`
+	SolanaRPCURL        string `env:"SOLANA_RPC_URL" default:"https://api.devnet.solana.com"`
+	USDTRPCURL          string `env:"USDT_RPC_URL" default:"https://data-seed-prebsc-1-s1.binance.org:8545"`
+	BTCRPCURL           string `env:"BTC_RPC_URL" default:"https://api.blockcypher.com/v1/btc/test3"`
+
+	// KYC Region Restriction
+	AllowedRegions string `env:"ALLOWED_REGIONS" default:"indonesia,philippines,filipina,thailand,malaysia,myanmar,cambodia,kamboja,vietnam,brazil,china,tiongkok,japan,jepang,india,kazakhstan"`
+}
+
+var globalConfig *Config
+
+// Get returns the global configuration instance
+func Get() *Config {
+	if globalConfig == nil {
+		globalConfig = Load()
+	}
+	return globalConfig
 }
 
 // Load loads configuration from environment variables
@@ -65,8 +84,9 @@ func Load() *Config {
 			return value
 		}
 		return defaultValue
-	}
+	}; _ = getEnv
 
+	// Helper to get env as int
 	getEnvInt := func(key string, defaultValue int) int {
 		if value := os.Getenv(key); value != "" {
 			if intVal, err := strconv.Atoi(value); err == nil {
@@ -74,8 +94,9 @@ func Load() *Config {
 			}
 		}
 		return defaultValue
-	}
+	}; _ = getEnvInt
 
+	// Helper to get env as bool
 	getEnvBool := func(key string, defaultValue bool) bool {
 		if value := os.Getenv(key); value != "" {
 			if boolVal, err := strconv.ParseBool(value); err == nil {
@@ -83,16 +104,17 @@ func Load() *Config {
 			}
 		}
 		return defaultValue
-	}
+	}; _ = getEnvBool
 
+	// Helper to get env as duration
 	getEnvDuration := func(key string, defaultValue time.Duration) time.Duration {
 		if value := os.Getenv(key); value != "" {
-			if dur, err := time.ParseDuration(value); err == nil {
-				return dur
+			if durationVal, err := time.ParseDuration(value); err == nil {
+				return durationVal
 			}
 		}
 		return defaultValue
-	}
+	}; _ = getEnvDuration
 
 	// Server
 	cfg.ServerPort = getEnv("SERVER_PORT", "8080")
@@ -140,6 +162,16 @@ func Load() *Config {
 	cfg.DuitkuCallbackURL = getEnv("DUITKU_CALLBACK_URL", "")
 	cfg.DuitkuReturnURL = getEnv("DUITKU_RETURN_URL", "")
 
+	// Crypto & Blockchain
+	cfg.CryptoEncryptionKey = getEnv("CRYPTO_ENCRYPTION_KEY", "32-byte-long-aes-key-for-crypto")
+	cfg.SolanaRPCURL = getEnv("SOLANA_RPC_URL", "https://api.devnet.solana.com")
+	cfg.USDTRPCURL = getEnv("USDT_RPC_URL", "https://data-seed-prebsc-1-s1.binance.org:8545")
+	cfg.BTCRPCURL = getEnv("BTC_RPC_URL", "https://api.blockcypher.com/v1/btc/test3")
+
+	// KYC Region Restriction
+	cfg.AllowedRegions = getEnv("ALLOWED_REGIONS", "indonesia,philippines,filipina,thailand,malaysia,myanmar,cambodia,kamboja,vietnam,brazil,china,tiongkok,japan,jepang,india,kazakhstan")
+
+	globalConfig = cfg
 	return cfg
 }
 

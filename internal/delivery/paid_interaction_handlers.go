@@ -151,3 +151,21 @@ func (h *Handler) EndCall(w http.ResponseWriter, r *http.Request) {
 
 	h.writeJSON(w, http.StatusOK, map[string]string{"message": "Call ended"})
 }
+
+func (h *Handler) GetCallSession(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	idStr := vars["id"]
+	id, err := domain.FromString(idStr)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "INVALID_SESSION_ID", "Invalid session ID")
+		return
+	}
+
+	session, err := h.paidInteractionUseCase.GetCallSession(r.Context(), id)
+	if err != nil {
+		h.handleError(w, err)
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, session)
+}

@@ -1,0 +1,19 @@
+{
+  "unauthorized": "Acesso não autorizado. Por favor, faça login primeiro.",
+  "forbidden": "Acesso negado. Você não tem permissão.",
+  "not_found": "O recurso solicitado não foi encontrado.",
+  "internal_error": "Erro interno do servidor. Por favor, tente novamente mais tarde.",
+  "validation_error": "Erro de validação: %s",
+  "invalid_request": "Corpo da requisição ou parâmetros inválidos.",
+  "invalid_id": "Formato de ID inválido.",
+  "success_kyc_submit": "KYC enviado com sucesso e atualmente sob revisão.",
+  "success_agency_submit": "Verificação de negócio da agência enviada com sucesso.",
+  "success_ban": "O usuário e as impressões digitais de dispositivos associados foram banidos permanentemente.",
+  "success_onboarding_step": "Etapa marcada como concluída com sucesso.",
+  "lgbt_policy_ban": "Sua conta foi permanentemente bloqueada devido a uma violação da política da plataforma.",
+  "region_restricted": "KYC não aceito a partir deste país/região.",
+  "no_active_vip_sub": "Nenhuma assinatura ativa do VIP AI Clip encontrada.",
+  "quota_exceeded": "A cota do VIP AI Clip foi totalmente consumida para este ciclo de faturamento.",
+  "success_vip_sub": "Usuário assinou com sucesso o Plano VIP AI Clip: %s",
+  "insufficient_balance": "Saldo da carteira insuficiente ou erro de débito."
+}

@@ -175,3 +175,11 @@ func (uc *AgencyUseCase) RemoveHost(ctx context.Context, agencyID, hostID domain
 func (uc *AgencyUseCase) ListAgencyHosts(ctx context.Context, agencyID domain.UUID) ([]*domain.AgencyHost, error) {
 	return uc.agencyRepo.ListHosts(ctx, agencyID)
 }
+
+func (uc *AgencyUseCase) GetAgencyByOwner(ctx context.Context, ownerID domain.UUID) (*domain.Agency, error) {
+	return uc.agencyRepo.GetByOwnerID(ctx, ownerID)
+}
+
+func (uc *AgencyUseCase) GetHostRelation(ctx context.Context, hostID domain.UUID) (*domain.AgencyHost, error) {
+	return uc.agencyRepo.GetHostRelation(ctx, hostID)
+}

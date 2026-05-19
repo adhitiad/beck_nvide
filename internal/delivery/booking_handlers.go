@@ -115,3 +115,37 @@ func (h *Handler) RejectBooking(w http.ResponseWriter, r *http.Request) {
 
 	h.writeJSON(w, http.StatusOK, map[string]string{"message": "Booking rejected"})
 }
+
+func (h *Handler) ListMyBookings(w http.ResponseWriter, r *http.Request) {
+	userID := h.getUserID(r)
+	if userID.IsZero() {
+		h.writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "User not authenticated")
+		return
+	}
+	status := r.URL.Query().Get("status")
+
+	bookings, err := h.bookingUseCase.ListBookingsByUser(r.Context(), userID, status)
+	if err != nil {
+		h.handleError(w, err)
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, bookings)
+}
+
+func (h *Handler) ListHostBookings(w http.ResponseWriter, r *http.Request) {
+	hostID := h.getUserID(r)
+	if hostID.IsZero() {
+		h.writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "User not authenticated")
+		return
+	}
+	status := r.URL.Query().Get("status")
+
+	bookings, err := h.bookingUseCase.ListBookingsByHost(r.Context(), hostID, status)
+	if err != nil {
+		h.handleError(w, err)
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, bookings)
+}

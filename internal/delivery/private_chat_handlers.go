@@ -47,6 +47,13 @@ type PrivateMessageDTO struct {
 	ReplyToMessageID *string         `json:"reply_to_message_id,omitempty"`
 	IsEdited         bool            `json:"is_edited"`
 	IsDeleted        bool            `json:"is_deleted"`
+	IsEncrypted      bool            `json:"is_encrypted"`
+	DisappearMode    string          `json:"disappear_mode"`
+	DisappearAt      *time.Time      `json:"disappear_at,omitempty"`
+	ViewedAt         *time.Time      `json:"viewed_at,omitempty"`
+	IsScreenshot     bool            `json:"is_screenshot_detected"`
+	IsExpired        bool            `json:"is_expired"`
+	IsForwarded      bool            `json:"is_forwarded"`
 	CreatedAt        time.Time       `json:"created_at"`
 	UpdatedAt        time.Time       `json:"updated_at"`
 }
@@ -93,10 +100,17 @@ func toPrivateMessageDTO(m *domain.PrivateMessage) *PrivateMessageDTO {
 			}
 			return nil
 		}(),
-		IsEdited:  m.IsEdited,
-		IsDeleted: m.IsDeleted,
-		CreatedAt: m.CreatedAt,
-		UpdatedAt: m.UpdatedAt,
+		IsEdited:      m.IsEdited,
+		IsDeleted:     m.IsDeleted,
+		IsEncrypted:   m.IsEncrypted,
+		DisappearMode: m.DisappearMode,
+		DisappearAt:   m.DisappearAt,
+		ViewedAt:      m.ViewedAt,
+		IsScreenshot:  m.IsScreenshot,
+		IsExpired:     m.IsExpired,
+		IsForwarded:   m.IsForwarded,
+		CreatedAt:     m.CreatedAt,
+		UpdatedAt:     m.UpdatedAt,
 	}
 }
 
@@ -168,10 +182,12 @@ func (h *Handler) SendPrivateMessage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Type      string          `json:"type"`
-		Content   string          `json:"content"`
-		Metadata  json.RawMessage `json:"metadata,omitempty"`
-		ReplyToID *string         `json:"reply_to_id,omitempty"`
+		Type          string          `json:"type"`
+		Content       string          `json:"content"`
+		Metadata      json.RawMessage `json:"metadata,omitempty"`
+		ReplyToID     *string         `json:"reply_to_id,omitempty"`
+		IsEncrypted   bool            `json:"is_encrypted"`
+		DisappearMode string          `json:"disappear_mode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		h.writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request body")
@@ -190,7 +206,7 @@ func (h *Handler) SendPrivateMessage(w http.ResponseWriter, r *http.Request) {
 		replyToID = &rid
 	}
 
-	msg, err := h.privateChatUseCase.SendMessage(r.Context(), userID, convID, req.Type, req.Content, req.Metadata, replyToID)
+	msg, err := h.privateChatUseCase.SendMessage(r.Context(), userID, convID, req.Type, req.Content, req.Metadata, replyToID, req.IsEncrypted, req.DisappearMode)
 	if err != nil {
 		h.handleError(w, err)
 		return
@@ -415,4 +431,185 @@ func (h *Handler) ServeChatWS(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) getUserID(r *http.Request) domain.UUID {
 	id, _ := middleware.GetUserIDFromContext(r.Context())
 	return id
+}
+
+// RegisterE2EEKey handles POST /users/me/e2ee-key
+func (h *Handler) RegisterE2EEKey(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		PublicKey string `json:"public_key"`
+		KeyType   string `json:"key_type"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request body")
+		return
+	}
+
+	if req.PublicKey == "" {
+		h.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "Public key is required")
+		return
+	}
+	if req.KeyType == "" {
+		req.KeyType = "X25519"
+	}
+
+	userID := h.getUserID(r)
+	if userID.IsZero() {
+		h.writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "User not authenticated")
+		return
+	}
+
+	err := h.privateChatUseCase.RegisterE2EEKey(r.Context(), userID, req.PublicKey, req.KeyType)
+	if err != nil {
+		h.handleError(w, err)
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]string{"message": "E2EE public key registered successfully"})
+}
+
+// GetE2EEKey handles GET /users/{id}/e2ee-key
+func (h *Handler) GetE2EEKey(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	targetIDStr := vars["id"]
+	targetID, err := domain.FromString(targetIDStr)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "INVALID_USER_ID", "Invalid user ID")
+		return
+	}
+
+	key, err := h.privateChatUseCase.GetE2EEKey(r.Context(), targetID)
+	if err != nil {
+		h.handleError(w, err)
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, key)
+}
+
+// MuteUser handles POST /users/{id}/mute
+func (h *Handler) MuteUser(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	targetIDStr := vars["id"]
+	targetID, err := domain.FromString(targetIDStr)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "INVALID_USER_ID", "Invalid user ID")
+		return
+	}
+
+	var req struct {
+		DurationMinutes int `json:"duration_minutes"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req) // Optional, so ignore error
+
+	userID := h.getUserID(r)
+	if userID.IsZero() {
+		h.writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "User not authenticated")
+		return
+	}
+
+	err = h.privateChatUseCase.MuteUser(r.Context(), userID, targetID, req.DurationMinutes)
+	if err != nil {
+		h.handleError(w, err)
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]string{"message": "User muted successfully"})
+}
+
+// UnmuteUser handles POST /users/{id}/unmute
+func (h *Handler) UnmuteUser(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	targetIDStr := vars["id"]
+	targetID, err := domain.FromString(targetIDStr)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "INVALID_USER_ID", "Invalid user ID")
+		return
+	}
+
+	userID := h.getUserID(r)
+	if userID.IsZero() {
+		h.writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "User not authenticated")
+		return
+	}
+
+	err = h.privateChatUseCase.UnmuteUser(r.Context(), userID, targetID)
+	if err != nil {
+		h.handleError(w, err)
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]string{"message": "User unmuted successfully"})
+}
+
+// GetMutedUsers handles GET /users/me/mutes
+func (h *Handler) GetMutedUsers(w http.ResponseWriter, r *http.Request) {
+	userID := h.getUserID(r)
+	if userID.IsZero() {
+		h.writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "User not authenticated")
+		return
+	}
+
+	users, err := h.privateChatUseCase.GetMutedUsers(r.Context(), userID)
+	if err != nil {
+		h.handleError(w, err)
+		return
+	}
+
+	dtos := make([]*UserDTO, len(users))
+	for i, u := range users {
+		dtos[i] = toUserDTO(u)
+	}
+
+	h.writeJSON(w, http.StatusOK, dtos)
+}
+
+// UpdatePrivacySettings handles PUT /users/me/privacy
+func (h *Handler) UpdatePrivacySettings(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		IsPrivateProfile bool `json:"is_private_profile"`
+		IsIncognito      bool `json:"is_incognito"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request body")
+		return
+	}
+
+	userID := h.getUserID(r)
+	if userID.IsZero() {
+		h.writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "User not authenticated")
+		return
+	}
+
+	err := h.privateChatUseCase.UpdateUserPrivacy(r.Context(), userID, req.IsPrivateProfile, req.IsIncognito)
+	if err != nil {
+		h.handleError(w, err)
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]string{"message": "Privacy settings updated successfully"})
+}
+
+// NotifyScreenshot handles POST /conversations/{id}/screenshot
+func (h *Handler) NotifyScreenshot(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	convIDStr := vars["id"]
+	convID, err := domain.FromString(convIDStr)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "INVALID_CONVERSATION_ID", "Invalid conversation ID")
+		return
+	}
+
+	userID := h.getUserID(r)
+	if userID.IsZero() {
+		h.writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "User not authenticated")
+		return
+	}
+
+	err = h.privateChatUseCase.NotifyScreenshot(r.Context(), userID, convID)
+	if err != nil {
+		h.handleError(w, err)
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, map[string]string{"message": "Screenshot notification sent successfully"})
 }

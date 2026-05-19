@@ -56,16 +56,44 @@ func (h *Handler) ServeCallWS(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) handleCallSignaling(conn *gorillaws.Conn, sessionID domain.UUID, userID string) {
 	defer conn.Close()
 
-	// 1. Join "call:{session_id}" room in Hub (for signaling)
 	roomID := "call:" + sessionID.String()
-	
-	// We'll use a simplified signaling for now. 
-	// In a real SFU environment, this would be more complex.
-	// For P2P, we just relay messages to the other participant in the same room.
-	
-	// Start billing ticker if this is the start of the call
-	// This should ideally be triggered by "call:start" event
-	
+	topic := "room:" + roomID
+
+	writeChan := make(chan []byte, 256)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Safe concurrent writer loop
+	go func() {
+		for {
+			select {
+			case msg, ok := <-writeChan:
+				if !ok {
+					return
+				}
+				conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+				if err := conn.WriteMessage(gorillaws.TextMessage, msg); err != nil {
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	// Subscribe connection to the message broker for this call room
+	brokerInstance := h.wsHub.GetBroker()
+	errSub := brokerInstance.Subscribe(ctx, topic, func(message string) {
+		select {
+		case writeChan <- []byte(message):
+		case <-ctx.Done():
+		}
+	})
+	if errSub != nil {
+		h.logger.Error("Failed to subscribe call connection to broker", zap.Error(errSub))
+		return
+	}
+
 	for {
 		_, msgBytes, err := conn.ReadMessage()
 		if err != nil {
@@ -91,7 +119,7 @@ func (h *Handler) handleCallSignaling(conn *gorillaws.Conn, sessionID domain.UUI
 			return
 			
 		case "webrtc:offer", "webrtc:answer", "webrtc:ice":
-			// Relay to other participant via Hub
+			// Relay WebRTC SDP/ICE payloads to the room via Broker
 			h.wsHub.BroadcastToRoom(roomID, msgBytes)
 		}
 	}

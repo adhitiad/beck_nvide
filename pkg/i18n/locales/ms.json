@@ -1,0 +1,19 @@
+{
+  "unauthorized": "Akses tanpa kebenaran. Sila log masuk terlebih dahulu.",
+  "forbidden": "Akses ditolak. Anda tidak mempunyai kebenaran.",
+  "not_found": "Sumber yang diminta tidak ditemui.",
+  "internal_error": "Ralat pelayan dalaman. Sila cuba lagi seketika nanti.",
+  "validation_error": "Ralat pengesahan: %s",
+  "invalid_request": "Kandungan permintaan atau parameter tidak sah.",
+  "invalid_id": "Format ID tidak sah.",
+  "success_kyc_submit": "KYC berjaya dihantar dan kini sedang disemak.",
+  "success_agency_submit": "Pengesahan perniagaan agensi berjaya dihantar.",
+  "success_ban": "Pengguna dan cap jari peranti yang berkaitan telah disekat secara kekal.",
+  "success_onboarding_step": "Langkah berjaya ditandakan sebagai selesai.",
+  "lgbt_policy_ban": "Akaun anda telah disekat secara kekal kerana melanggar dasar platform.",
+  "region_restricted": "KYC tidak diterima dari negara/wilayah ini.",
+  "no_active_vip_sub": "Tiada langganan aktif VIP AI Clip ditemui.",
+  "quota_exceeded": "Kuota VIP AI Clip telah habis digunakan sepenuhnya untuk kitaran pengebilan ini.",
+  "success_vip_sub": "Pengguna berjaya melanggan Pelan VIP AI Clip: %s",
+  "insufficient_balance": "Baki dompet tidak mencukupi atau berlaku ralat debit."
+}

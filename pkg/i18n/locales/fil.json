@@ -1,0 +1,19 @@
+{
+  "unauthorized": "Walang pahintulot na access. Mangyaring mag-log in muna.",
+  "forbidden": "Access denied. Wala kang pahintulot.",
+  "not_found": "Hindi nahanap ang hiniling na resource.",
+  "internal_error": "Internal server error. Mangyaring subukan muli mamaya.",
+  "validation_error": "Error sa pagpapatunay: %s",
+  "invalid_request": "Hindi wastong request body o mga parameter.",
+  "invalid_id": "Hindi wastong format ng ID.",
+  "success_kyc_submit": "Matagumpay na naisumite ang KYC at kasalukuyang sinusuri.",
+  "success_agency_submit": "Matagumpay na naisumite ang pagpapatunay ng negosyo ng ahensya.",
+  "success_ban": "Ang user at mga nauugnay na fingerprint ay permanenteng na-ban.",
+  "success_onboarding_step": "Matagumpay na namarkahan ang hakbang bilang tapos na.",
+  "lgbt_policy_ban": "Ang iyong account ay permanenteng hinarangan dahil sa paglabag sa patakaran.",
+  "region_restricted": "Hindi tinatanggap ang KYC mula sa bansa/rehiyon na ito.",
+  "no_active_vip_sub": "Walang natagpuang aktibong VIP AI Clip subscription.",
+  "quota_exceeded": "Ang kuota ng VIP AI Clip ay ganap nang naubos para sa billing cycle na ito.",
+  "success_vip_sub": "Matagumpay na nag-subscribe ang user sa VIP AI Clip Plan: %s",
+  "insufficient_balance": "Hindi sapat ang balanse sa wallet o may error sa pag-debit."
+}

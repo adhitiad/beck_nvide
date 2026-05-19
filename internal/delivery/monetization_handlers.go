@@ -344,6 +344,66 @@ func (h *MonetizationHandler) ListAgencyHosts(w http.ResponseWriter, r *http.Req
 	h.writeJSON(w, http.StatusOK, hosts)
 }
 
+func (h *MonetizationHandler) GetMyAgency(w http.ResponseWriter, r *http.Request) {
+	ownerID, ok := h.getUserID(r)
+	if !ok {
+		h.writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "User not authenticated")
+		return
+	}
+
+	agency, err := h.agencyUC.GetAgencyByOwner(r.Context(), ownerID)
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	if agency == nil {
+		h.writeJSON(w, http.StatusNotFound, map[string]string{"message": "Agency not found"})
+		return
+	}
+	h.writeJSON(w, http.StatusOK, agency)
+}
+
+func (h *MonetizationHandler) GetHostRelation(w http.ResponseWriter, r *http.Request) {
+	hostID, ok := h.getUserID(r)
+	if !ok {
+		h.writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "User not authenticated")
+		return
+	}
+
+	relation, err := h.agencyUC.GetHostRelation(r.Context(), hostID)
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	if relation == nil {
+		h.writeJSON(w, http.StatusNotFound, map[string]string{"message": "No agency relation found"})
+		return
+	}
+	h.writeJSON(w, http.StatusOK, relation)
+}
+
+func (h *MonetizationHandler) AcceptInvitation(w http.ResponseWriter, r *http.Request) {
+	hostID, ok := h.getUserID(r)
+	if !ok {
+		h.writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "User not authenticated")
+		return
+	}
+
+	vars := mux.Vars(r)
+	agencyID, err := domain.FromString(vars["agency_id"])
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "INVALID_AGENCY_ID", "Invalid agency ID")
+		return
+	}
+
+	err = h.agencyUC.AcceptInvitation(r.Context(), agencyID, hostID)
+	if err != nil {
+		h.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		return
+	}
+	h.writeJSON(w, http.StatusOK, map[string]string{"message": "Invitation accepted successfully"})
+}
+
 // ===== PAYMENT =====
 
 type DepositRequest struct {

@@ -32,6 +32,7 @@ uploads/
 tmp/
 bin/
 scratch/
+scratch/**.go
 
 # Logs
 *.log

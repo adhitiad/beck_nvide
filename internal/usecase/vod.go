@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -29,6 +30,7 @@ type VODTranscodePayload struct {
 
 type VODUseCase struct {
 	vodRepo     domain.VODMediaRepository
+	drmRepo     domain.DRMRepository
 	ffmpeg      *ffmpeg.FFmpeg
 	storage     storage.Storage
 	redisClient *redis.Client
@@ -39,6 +41,7 @@ type VODUseCase struct {
 
 func NewVODUseCase(
 	vodRepo domain.VODMediaRepository,
+	drmRepo domain.DRMRepository,
 	ffmpeg *ffmpeg.FFmpeg,
 	storage storage.Storage,
 	redisClient *redis.Client,
@@ -47,6 +50,7 @@ func NewVODUseCase(
 ) *VODUseCase {
 	uc := &VODUseCase{
 		vodRepo:     vodRepo,
+		drmRepo:     drmRepo,
 		ffmpeg:      ffmpeg,
 		storage:     storage,
 		redisClient: redisClient,
@@ -200,7 +204,38 @@ func (uc *VODUseCase) ProcessVideo(ctx context.Context, vodID domain.UUID, tempF
 	os.MkdirAll(hlsOutDir, 0755)
 	defer os.RemoveAll(hlsOutDir)
 
-	err = uc.ffmpeg.GenerateHLS(ctx, tempFilePath, hlsOutDir, meta.Duration, func(hlsPercent float64) {
+	// DRM AES-128 Setup
+	drmKey := make([]byte, 16)
+	if _, err := rand.Read(drmKey); err != nil {
+		uc.markAsFailed(ctx, vod, err)
+		return err
+	}
+
+	// Simpan kunci DRM ke DB
+	if err := uc.drmRepo.SaveDRMKey(ctx, vod.ID, drmKey); err != nil {
+		uc.markAsFailed(ctx, vod, err)
+		return err
+	}
+
+	// Tulis file video.key dan video.keyinfo untuk FFmpeg HLS encryption
+	keyFilePath := filepath.Join(hlsOutDir, "video.key")
+	if err := os.WriteFile(keyFilePath, drmKey, 0644); err != nil {
+		uc.markAsFailed(ctx, vod, err)
+		return err
+	}
+
+	keyInfoPath := filepath.Join(hlsOutDir, "video.keyinfo")
+	// Format keyinfo:
+	// line 1: URL kunci (dipanggil player)
+	// line 2: Path lokal ke video.key
+	keyURL := fmt.Sprintf("/api/v1/vods/%s/key", vod.ID.String())
+	keyInfoContent := fmt.Sprintf("%s\n%s\n", keyURL, keyFilePath)
+	if err := os.WriteFile(keyInfoPath, []byte(keyInfoContent), 0644); err != nil {
+		uc.markAsFailed(ctx, vod, err)
+		return err
+	}
+
+	err = uc.ffmpeg.GenerateEncryptedHLS(ctx, tempFilePath, hlsOutDir, keyInfoPath, meta.Duration, func(hlsPercent float64) {
 		// HLS progress accounts for 60% of total job progress (from 25% to 85%)
 		totalPercent := 25 + int(hlsPercent*0.60)
 		uc.redisClient.GetClient().Set(ctx, progressKey, totalPercent, 24*time.Hour)

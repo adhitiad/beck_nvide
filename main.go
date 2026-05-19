@@ -29,6 +29,7 @@ import (
 	"nvide-live/pkg/database"
 	"nvide-live/pkg/duitku"
 	"nvide-live/pkg/ffmpeg"
+	"nvide-live/pkg/i18n"
 	"nvide-live/pkg/rbac"
 	"nvide-live/pkg/redis"
 	"nvide-live/pkg/storage"
@@ -55,6 +56,14 @@ func main() {
 		fmt.Printf("Warning: failed to initialize pkg/logger: %v\n", err)
 	}
 	defer pkgLogger.Sync()
+
+	// Initialize Multi-Language translations (i18n)
+	i18nTranslator := i18n.GetTranslator()
+	if err := i18nTranslator.LoadTranslations("pkg/i18n/locales"); err != nil {
+		logger.Warn("Failed to load translations from disk, using embedded fallback", zap.Error(err))
+	} else {
+		logger.Info("Multi-language translations (i18n) loaded successfully")
+	}
 
 	logger.Info("Starting NVide Live Platform - Fase 5: Scaling & Optimization",
 		zap.String("version", "1.1.0"),
@@ -150,6 +159,18 @@ func main() {
 	withdrawalRepo := repository.NewWithdrawalRepository(db.Pool(), logger)
 	bookingRepo := repository.NewBookingRepository(db.Pool(), logger)
 	moderationRepo := repository.NewModerationRepository(db.Pool(), logger)
+	monetizationRepo := repository.NewMonetizationRepository(db.Pool(), logger)
+	creatorTokenRepo := repository.NewCreatorTokenRepository(db.Pool(), logger)
+	predictionRepo := repository.NewPredictionRepository(db.Pool(), logger)
+	drmRepo := repository.NewDRMRepository(db.Pool(), logger)
+	recommendationRepo := repository.NewRecommendationRepository(db.Pool(), logger)
+	clipRepo := repository.NewClipRepository(db.Pool(), logger)
+
+	// New KYC and Subscription Repositories
+	kycRepo := repository.NewKYCRepository(db.Pool(), logger)
+	bannedRepo := repository.NewBannedUserRepository(db.Pool(), logger)
+	onboardRepo := repository.NewOnboardingRepository(db.Pool(), logger)
+	clipSubRepo := repository.NewClipSubscriptionRepository(db.Pool(), logger)
 
 	// Initialize Storage and FFmpeg
 	localStorage := storage.NewLocalStorage("./uploads", "/uploads", logger)
@@ -170,8 +191,8 @@ func main() {
 	go wsHub.Run()
 
 	// Initialize Blockchain Clients
-	solanaClient := blockchain.NewSolanaClient("https://api.devnet.solana.com")
-	evmClient, _ := blockchain.NewEVMClient("https://data-seed-prebsc-1-s1.binance.org:8545") // BSC Testnet for USDT
+	solanaClient := blockchain.NewSolanaClient(cfg.SolanaRPCURL)
+	evmClient, _ := blockchain.NewEVMClient(cfg.USDTRPCURL) // BSC Testnet for USDT
 
 	// Initialize new worker pool (Fase 5)
 	workerPool := worker.NewPool(5, logger)
@@ -222,7 +243,7 @@ func main() {
 			_ = trendingUseCase.RecalculateTrendingScores(context.Background())
 		}
 	}()
-	vodUseCase := usecase.NewVODUseCase(vodRepo, ffmpegSvc, localStorage, redisClient, workerPool, logger)
+	vodUseCase := usecase.NewVODUseCase(vodRepo, drmRepo, ffmpegSvc, localStorage, redisClient, workerPool, logger)
 	workerPool.RegisterHandler(worker.JobVideoTranscode, func(ctx context.Context, job *worker.Job) error {
 		var payload usecase.VODTranscodePayload
 		if err := json.Unmarshal(job.Payload, &payload); err != nil {
@@ -239,13 +260,24 @@ func main() {
 	giftUseCase := usecase.NewGiftUseCase(giftRepo, giftTxRepo, agencyRepo, walletUseCase, privateChatUseCase, messageRepo, chatRoomRepo, wsHub, redisClient, logger)
 	agencyUseCase := usecase.NewAgencyUseCase(hostAppRepo, agencyRepo, walletUseCase, logger)
 	paymentUseCase := usecase.NewPaymentUseCase(txRepo, duitkuPaymentRepo, walletUseCase, duitkuClient, redisClient, logger)
-	cryptoUseCase := usecase.NewCryptoUseCase(cryptoRepo, walletUseCase, redisClient, logger, []byte("32-byte-long-aes-key-for-crypto"))
+	cryptoUseCase := usecase.NewCryptoUseCase(cryptoRepo, walletUseCase, redisClient, logger, []byte(cfg.CryptoEncryptionKey))
 	paidInteractionUseCase := usecase.NewPaidInteractionUsecase(paidInteractionRepo, walletRepo, txRepo, userRepo, agencyRepo, redisClient, logger)
 	withdrawalUseCase := usecase.NewWithdrawalUsecase(withdrawalRepo, walletRepo, txRepo, agencyRepo, userRepo, redisClient, logger)
 	bookingUseCase := usecase.NewBookingUsecase(bookingRepo, walletRepo, agencyRepo, withdrawalUseCase, redisClient, logger)
 	offerRepo := repository.NewOfferRepository(db.Pool(), logger)
 	offerUseCase := usecase.NewOfferUsecase(offerRepo, bookingRepo, bookingUseCase, walletRepo, agencyRepo, redisClient, logger)
 	locationUseCase := usecase.NewLocationUsecase(bookingRepo, redisClient, logger)
+	creatorTokenUseCase := usecase.NewCreatorTokenUseCase(creatorTokenRepo, walletRepo, txRepo, logger)
+	predictionUseCase := usecase.NewPredictionUseCase(predictionRepo, streamRepo, walletRepo, txRepo, creatorTokenRepo, logger)
+	drmUseCase := usecase.NewDRMUseCase(drmRepo, vodRepo, logger)
+	recommendationUseCase := usecase.NewRecommendationUseCase(recommendationRepo, streamRepo, vodRepo, logger)
+	clipUseCase := usecase.NewClipUseCase(clipRepo, streamRepo, redisClient, logger)
+	extraMonetizationUseCase := usecase.NewMonetizationUseCase(monetizationRepo, walletRepo, txRepo, streamRepo, logger)
+
+	// New KYC and Subscription Usecases
+	kycUseCase := usecase.NewKYCUseCase(kycRepo, userRepo, bannedRepo, streamRepo, onboardRepo, logger)
+	onboardingUseCase := usecase.NewOnboardingUseCase(onboardRepo, userRepo, logger)
+	clipSubUseCase := usecase.NewClipSubscriptionUseCase(clipSubRepo, userRepo, walletUseCase, logger)
 
 	// Initialize ModerationUseCase & NSFW Scanner (Fitur 6)
 	nsfwScanner := usecase.NewAWSRekognitionScanner(logger)
@@ -288,6 +320,15 @@ func main() {
 	go cryptoMonitor.Start()
 	defer cryptoMonitor.Stop()
 
+	// Periodic Disappearing Messages Processor (Fitur 8)
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			_ = privateChatUseCase.ProcessExpiredMessages(context.Background())
+		}
+	}()
+
 	// WebRTC Room Manager
 	webrtcRoomManager := webrtc.NewRoomManager(logger)
 	streamUseCase.StartViewerCountSyncJob(context.Background(), webrtcRoomManager)
@@ -314,9 +355,19 @@ func main() {
 	pkHandler := delivery.NewPKBattleHandler(pkUseCase, logger)
 	vodHandler := delivery.NewVODHandler(vodUseCase, logger)
 	monetizationHandler := delivery.NewMonetizationHandler(walletUseCase, giftUseCase, agencyUseCase, paymentUseCase, withdrawalUseCase, logger)
+	extraMonetizationHandler := delivery.NewExtraMonetizationHandler(extraMonetizationUseCase, logger)
 	healthHandler := delivery.NewHealthHandler(db.Pool(), redisClient, msgBroker)
 	cryptoHandler := delivery.NewCryptoHandler(cryptoUseCase, cryptoMonitor, logger)
 	moderationHandler := delivery.NewModerationHandler(moderationUseCase, logger)
+	creatorTokenHandler := delivery.NewCreatorTokenHandler(creatorTokenUseCase, logger)
+	predictionHandler := delivery.NewPredictionHandler(predictionUseCase, logger)
+	drmHandler := delivery.NewDRMHandler(drmUseCase, vodUseCase, logger)
+	recommendationHandler := delivery.NewRecommendationHandler(recommendationUseCase, logger)
+	clipHandler := delivery.NewClipHandler(clipUseCase, logger)
+
+	// New KYC and Subscription Handlers
+	kycHandler := delivery.NewKYCHandler(kycUseCase, onboardingUseCase, logger)
+	clipSubHandler := delivery.NewClipSubscriptionHandler(clipSubUseCase, logger)
 
 	// Initialize middleware
 	authMiddleware := middleware.NewAuthMiddleware(authService, redisClient, logger)
@@ -332,20 +383,34 @@ func main() {
 	// Initialize Idempotency Manager
 	idempotencyManager := wallet.NewIdempotencyManager(redisClient, logger)
 
+	// New Middlewares
+	banCheckerMiddleware := middleware.NewBanChecker(bannedRepo, logger)
+	clipQuotaMiddleware := middleware.NewClipQuotaMiddleware(clipSubUseCase, logger)
+
 	// Setup router
 	router := delivery.SetupRouter(
 		handler,
 		webrtcHandler,
 		vodHandler,
 		monetizationHandler,
+		extraMonetizationHandler,
 		healthHandler,
 		cryptoHandler,
 		pkHandler,
 		moderationHandler,
+		creatorTokenHandler,
+		predictionHandler,
+		drmHandler,
+		recommendationHandler,
+		clipHandler,
+		kycHandler,
+		clipSubHandler,
 		authMiddleware,
 		rbacMiddleware,
 		rateLimitMiddleware,
 		idempotencyManager,
+		banCheckerMiddleware,
+		clipQuotaMiddleware,
 		logger,
 	)
 

@@ -414,7 +414,7 @@ func (r *userRepository) Search(ctx context.Context, query string, limit int) ([
 		       verification_token, reset_token, reset_token_expires_at, last_login_at,
 		       created_at, updated_at
 		FROM users
-		WHERE username ILIKE $1 OR email ILIKE $1
+		WHERE (username ILIKE $1 OR email ILIKE $1) AND is_private_profile = FALSE
 		ORDER BY created_at DESC
 		LIMIT $2
 	`

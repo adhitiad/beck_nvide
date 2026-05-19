@@ -1,0 +1,19 @@
+{
+  "unauthorized": "未经授权的访问。请先登录。",
+  "forbidden": "拒绝访问。您没有权限。",
+  "not_found": "找不到请求的资源。",
+  "internal_error": "服务器内部错误。请稍后重试。",
+  "validation_error": "验证错误: %s",
+  "invalid_request": "请求体或参数无效。",
+  "invalid_id": "ID格式无效。",
+  "success_kyc_submit": "KYC提交成功，目前正在审核中。",
+  "success_agency_submit": "机构业务验证提交成功。",
+  "success_ban": "该用户及关联设备指纹已被永久封禁。",
+  "success_onboarding_step": "步骤已成功标记为完成。",
+  "lgbt_policy_ban": "由于违反平台政策，您的账号已被永久封禁。",
+  "region_restricted": "此国家/地区不接受KYC申请。",
+  "no_active_vip_sub": "未找到有效的 VIP AI 剪辑订阅。",
+  "quota_exceeded": "此计费周期内，VIP AI 剪辑额度已全部用尽。",
+  "success_vip_sub": "用户成功订阅 VIP AI 剪辑计划: %s",
+  "insufficient_balance": "钱包余额不足或扣款错误。"
+}

@@ -1,6 +1,7 @@
 package delivery
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -11,9 +12,9 @@ import (
 	"go.uber.org/zap"
 
 	"nvide-live/internal/domain"
+	"nvide-live/internal/middleware"
 	"nvide-live/internal/usecase"
 	"nvide-live/internal/websocket"
-	"nvide-live/internal/middleware"
 	gorillaws "github.com/gorilla/websocket"
 )
 
@@ -944,35 +945,48 @@ func (h *Handler) writeError(w http.ResponseWriter, status int, code, message st
 	})
 }
 
+// writeErrorLocalized writes a localized error response
+func (h *Handler) writeErrorLocalized(ctx context.Context, w http.ResponseWriter, status int, code, translationKey string, defaultMessage string) {
+	msg := middleware.T(ctx, translationKey)
+	if msg == translationKey { // translation key not found, fallback to defaultMessage
+		msg = defaultMessage
+	}
+	h.writeError(w, status, code, msg)
+}
+
 // handleError handles domain errors and converts to HTTP response
 func (h *Handler) handleError(w http.ResponseWriter, err error) {
+	h.handleErrorCtx(context.Background(), w, err)
+}
+
+// handleErrorCtx handles domain errors and converts to localized HTTP response
+func (h *Handler) handleErrorCtx(ctx context.Context, w http.ResponseWriter, err error) {
 	switch {
 	case err == domain.ErrNotFound:
-		h.writeError(w, http.StatusNotFound, domain.ErrCodeNotFound, "Resource not found")
+		h.writeErrorLocalized(ctx, w, http.StatusNotFound, domain.ErrCodeNotFound, "not_found", "Resource not found")
 	case err == domain.ErrConflict:
-		h.writeError(w, http.StatusConflict, domain.ErrCodeConflict, err.Error())
+		h.writeErrorLocalized(ctx, w, http.StatusConflict, domain.ErrCodeConflict, "conflict", err.Error())
 	case err == domain.ErrUnauthorized:
-		h.writeError(w, http.StatusUnauthorized, domain.ErrCodeUnauthorized, err.Error())
+		h.writeErrorLocalized(ctx, w, http.StatusUnauthorized, domain.ErrCodeUnauthorized, "unauthorized", err.Error())
 	case err == domain.ErrForbidden:
-		h.writeError(w, http.StatusForbidden, domain.ErrCodeForbidden, err.Error())
+		h.writeErrorLocalized(ctx, w, http.StatusForbidden, domain.ErrCodeForbidden, "forbidden", err.Error())
 	case err == domain.ErrInvalidToken:
-		h.writeError(w, http.StatusUnauthorized, domain.ErrCodeInvalidToken, err.Error())
+		h.writeErrorLocalized(ctx, w, http.StatusUnauthorized, domain.ErrCodeInvalidToken, "invalid_token", err.Error())
 	case err == domain.ErrExpiredToken:
-		h.writeError(w, http.StatusUnauthorized, domain.ErrCodeExpiredToken, err.Error())
+		h.writeErrorLocalized(ctx, w, http.StatusUnauthorized, domain.ErrCodeExpiredToken, "expired_token", err.Error())
 	case err == domain.ErrTokenRevoked:
-		h.writeError(w, http.StatusUnauthorized, domain.ErrCodeTokenRevoked, err.Error())
+		h.writeErrorLocalized(ctx, w, http.StatusUnauthorized, domain.ErrCodeTokenRevoked, "token_revoked", err.Error())
 	case err == domain.ErrRateLimitExceeded:
-		h.writeError(w, http.StatusTooManyRequests, domain.ErrCodeRateLimit, err.Error())
+		h.writeErrorLocalized(ctx, w, http.StatusTooManyRequests, domain.ErrCodeRateLimit, "rate_limit", err.Error())
 	case err == domain.ErrInvalidCredentials:
-		h.writeError(w, http.StatusUnauthorized, domain.ErrCodeInvalidCreds, err.Error())
+		h.writeErrorLocalized(ctx, w, http.StatusUnauthorized, domain.ErrCodeInvalidCreds, "invalid_credentials", err.Error())
 	case err != nil:
-	// Check for validation error
-	if _, ok := err.(domain.ValidationError); ok {
-		h.writeError(w, http.StatusBadRequest, domain.ErrCodeValidation, err.Error())
-	} else {
-		h.logger.Error("Unhandled error", zap.Error(err))
-		h.writeError(w, http.StatusInternalServerError, domain.ErrCodeInternal, "Internal server error")
-	}
+		if _, ok := err.(domain.ValidationError); ok {
+			h.writeErrorLocalized(ctx, w, http.StatusBadRequest, domain.ErrCodeValidation, "validation_error", err.Error())
+		} else {
+			h.logger.Error("Unhandled error", zap.Error(err))
+			h.writeErrorLocalized(ctx, w, http.StatusInternalServerError, domain.ErrCodeInternal, "internal_error", "Internal server error")
+		}
 	}
 }
 

@@ -1,0 +1,19 @@
+{
+  "unauthorized": "Akses tidak sah. Silakan masuk terlebih dahulu.",
+  "forbidden": "Akses ditolak. Anda tidak memiliki izin.",
+  "not_found": "Sumber daya yang diminta tidak ditemukan.",
+  "internal_error": "Kesalahan server internal. Silakan coba beberapa saat lagi.",
+  "validation_error": "Kesalahan validasi: %s",
+  "invalid_request": "Konten permintaan atau parameter tidak valid.",
+  "invalid_id": "Format ID tidak valid.",
+  "success_kyc_submit": "KYC berhasil diajukan dan saat ini sedang ditinjau.",
+  "success_agency_submit": "Verifikasi bisnis agensi berhasil diajukan.",
+  "success_ban": "Pengguna dan sidik jari perangkat terkait telah diblokir secara permanen.",
+  "success_onboarding_step": "Langkah berhasil ditandai selesai.",
+  "lgbt_policy_ban": "Akun Anda telah diblokir secara permanen karena melanggar kebijakan platform.",
+  "region_restricted": "KYC tidak diterima dari negara/wilayah ini.",
+  "no_active_vip_sub": "Tidak ada langganan VIP AI Clip yang aktif ditemukan.",
+  "quota_exceeded": "Kuota VIP AI Clip Anda telah sepenuhnya habis untuk siklus penagihan ini.",
+  "success_vip_sub": "Pengguna berhasil berlangganan Paket VIP AI Clip: %s",
+  "insufficient_balance": "Saldo dompet tidak mencukupi atau terjadi kesalahan pendebitan."
+}

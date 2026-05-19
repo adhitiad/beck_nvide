@@ -156,6 +156,63 @@ func (f *FFmpeg) GenerateHLS(ctx context.Context, inputPath, outputDir string, d
 	return nil
 }
 
+// GenerateEncryptedHLS transcodes input to HLS format (720p) with HLS AES-128 encryption and progress tracking
+func (f *FFmpeg) GenerateEncryptedHLS(ctx context.Context, inputPath, outputDir string, keyInfoPath string, duration float64, progressCallback func(percent float64)) error {
+	hlsOutputPath := filepath.Join(outputDir, "playlist.m3u8")
+	cmd := exec.CommandContext(ctx, "ffmpeg",
+		"-y",
+		"-progress", "pipe:1",
+		"-i", inputPath,
+		"-profile:v", "main",
+		"-vf", "scale=-2:720", // scale to 720p
+		"-c:v", "h264",
+		"-c:a", "aac",
+		"-f", "hls",
+		"-hls_time", "6",
+		"-hls_playlist_type", "vod",
+		"-hls_key_info_file", keyInfoPath,
+		"-hls_segment_filename", filepath.Join(outputDir, "segment_%03d.ts"),
+		hlsOutputPath,
+	)
+
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("failed to get stdout pipe: %w", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("failed to start ffmpeg: %w", err)
+	}
+
+	// Parse progress from pipe
+	scanner := bufio.NewScanner(stdoutPipe)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "out_time_us=") {
+			timeUsStr := strings.TrimPrefix(line, "out_time_us=")
+			if timeUs, err := strconv.ParseFloat(timeUsStr, 64); err == nil && duration > 0 {
+				percent := (timeUs / (duration * 1000000.0)) * 100.0
+				if percent > 100.0 {
+					percent = 100.0
+				}
+				if percent < 0.0 {
+					percent = 0.0
+				}
+				if progressCallback != nil {
+					progressCallback(percent)
+				}
+			}
+		}
+	}
+
+	if err := cmd.Wait(); err != nil {
+		f.logger.Error("ffmpeg encrypted HLS transcoding failed", zap.Error(err))
+		return err
+	}
+
+	return nil
+}
+
 // GenerateThumbnail extracts a frame at the middle of the video
 func (f *FFmpeg) GenerateThumbnail(ctx context.Context, inputPath, outputPath string, duration float64) error {
 	middleTime := duration / 2

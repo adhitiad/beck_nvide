@@ -67,6 +67,7 @@ type PrivateMessage struct {
 	IsEdited          bool            `json:"is_edited" db:"is_edited"`
 	IsDeleted         bool            `json:"is_deleted" db:"is_deleted"`
 	IsExpired         bool            `json:"is_expired" db:"is_expired"`
+	IsEncrypted       bool            `json:"is_encrypted" db:"is_encrypted"`
 	DisappearMode     string          `json:"disappear_mode" db:"disappear_mode"`
 	DisappearAt       *time.Time      `json:"disappear_at,omitempty" db:"disappear_at"`
 	ViewedAt          *time.Time      `json:"viewed_at,omitempty" db:"viewed_at"`
@@ -124,12 +125,22 @@ type MessageAttachment struct {
 }
 
 // UserBlock represents a blocked user
+// UserBlock represents a blocked user
 type UserBlock struct {
 	ID        UUID      `json:"id" db:"id"`
 	BlockerID UUID      `json:"blocker_id" db:"blocker_id"`
 	BlockedID UUID      `json:"blocked_id" db:"blocked_id"`
 	Reason    *string   `json:"reason,omitempty" db:"reason"`
 	CreatedAt time.Time `json:"created_at" db:"created_at"`
+}
+
+// UserE2EEKey represents the registered public key for E2EE per user
+type UserE2EEKey struct {
+	UserID    UUID      `json:"user_id" db:"user_id"`
+	PublicKey string    `json:"public_key" db:"public_key"`
+	KeyType   string    `json:"key_type" db:"key_type"` // e.g. "X25519"
+	CreatedAt time.Time `json:"created_at" db:"created_at"`
+	UpdatedAt time.Time `json:"updated_at" db:"updated_at"`
 }
 
 // PrivateChatRepository defines the contract for private chat data access
@@ -167,18 +178,29 @@ type PrivateChatRepository interface {
 	ListExpiredMessages(ctx context.Context, now time.Time) ([]*PrivateMessage, error)
 	HardDeleteExpired(ctx context.Context, threshold time.Time) error
 
-	// Blocks
+	// Blocks & Mutes
 	BlockUser(ctx context.Context, blockerID, blockedID UUID, reason string) error
 	UnblockUser(ctx context.Context, blockerID, blockedID UUID) error
 	IsBlocked(ctx context.Context, user1, user2 UUID) (bool, error)
 	ListBlockedUsers(ctx context.Context, blockerID UUID) ([]*User, error)
+	MuteUser(ctx context.Context, blockerID, blockedID UUID, expiresAt *time.Time) error
+	UnmuteUser(ctx context.Context, blockerID, blockedID UUID) error
+	IsMuted(ctx context.Context, user1, user2 UUID) (bool, error)
+	ListMutedUsers(ctx context.Context, userID UUID) ([]*User, error)
+
+	// E2EE Key Registry
+	SaveE2EEKey(ctx context.Context, key *UserE2EEKey) error
+	GetE2EEKey(ctx context.Context, userID UUID) (*UserE2EEKey, error)
+
+	// Privacy settings update
+	UpdateUserPrivacySettings(ctx context.Context, userID UUID, isPrivate, isIncognito bool) error
 }
 
 // PrivateChatUsecase defines the business logic for private chat
 type PrivateChatUsecase interface {
 	StartConversation(ctx context.Context, initiatorID, recipientID UUID) (*Conversation, error)
 	GetConversations(ctx context.Context, userID UUID, cursorTime *time.Time, cursorID *UUID, limit int) ([]*Conversation, error)
-	SendMessage(ctx context.Context, senderID, convID UUID, msgType string, content string, metadata json.RawMessage, replyToID *UUID) (*PrivateMessage, error)
+	SendMessage(ctx context.Context, senderID, convID UUID, msgType string, content string, metadata json.RawMessage, replyToID *UUID, isEncrypted bool, disappearMode string) (*PrivateMessage, error)
 	GetMessages(ctx context.Context, userID, convID UUID, cursorTime *time.Time, cursorID *UUID, limit int) ([]*PrivateMessage, error)
 	GetConversationByID(ctx context.Context, id UUID) (*Conversation, error)
 	EditMessage(ctx context.Context, userID, msgID UUID, content string) (*PrivateMessage, error)
@@ -195,8 +217,16 @@ type PrivateChatUsecase interface {
 	NotifyScreenshot(ctx context.Context, userID, conversationID UUID) error
 	ProcessExpiredMessages(ctx context.Context) error
 	
-	// Privacy
+	// Privacy (Block, Mute & Privacy Toggle)
 	BlockUser(ctx context.Context, blockerID, blockedID UUID, reason string) error
 	UnblockUser(ctx context.Context, blockerID, blockedID UUID) error
 	GetBlockedUsers(ctx context.Context, userID UUID) ([]*User, error)
+	MuteUser(ctx context.Context, blockerID, blockedID UUID, durationMinutes int) error
+	UnmuteUser(ctx context.Context, blockerID, blockedID UUID) error
+	GetMutedUsers(ctx context.Context, userID UUID) ([]*User, error)
+	UpdateUserPrivacy(ctx context.Context, userID UUID, isPrivate, isIncognito bool) error
+
+	// E2EE Key Registry
+	RegisterE2EEKey(ctx context.Context, userID UUID, publicKey string, keyType string) error
+	GetE2EEKey(ctx context.Context, userID UUID) (*UserE2EEKey, error)
 }

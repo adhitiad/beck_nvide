@@ -273,3 +273,11 @@ func (u *bookingUsecase) EndSession(ctx context.Context, bookingID domain.UUID) 
 	
 	return nil
 }
+
+func (u *bookingUsecase) ListBookingsByHost(ctx context.Context, hostID domain.UUID, status string) ([]*domain.Booking, error) {
+	return u.repo.ListBookingsByHost(ctx, hostID, status)
+}
+
+func (u *bookingUsecase) ListBookingsByUser(ctx context.Context, userID domain.UUID, status string) ([]*domain.Booking, error) {
+	return u.repo.ListBookingsByUser(ctx, userID, status)
+}

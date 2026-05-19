@@ -106,4 +106,5 @@ type PaidInteractionUsecase interface {
 	RejectCall(ctx context.Context, sessionID UUID, reason string) error
 	EndCall(ctx context.Context, sessionID UUID, reason string) error
 	ProcessBillingTick(ctx context.Context, sessionID UUID) error
+	GetCallSession(ctx context.Context, sessionID UUID) (*CallSession, error)
 }

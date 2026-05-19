@@ -84,7 +84,7 @@ func (u *privateChatUsecase) GetConversations(ctx context.Context, userID domain
 	return u.repo.ListConversations(ctx, userID, cursorTime, cursorID, limit)
 }
 
-func (u *privateChatUsecase) SendMessage(ctx context.Context, senderID, convID domain.UUID, msgType string, content string, metadata json.RawMessage, replyToID *domain.UUID) (*domain.PrivateMessage, error) {
+func (u *privateChatUsecase) SendMessage(ctx context.Context, senderID, convID domain.UUID, msgType string, content string, metadata json.RawMessage, replyToID *domain.UUID, isEncrypted bool, disappearMode string) (*domain.PrivateMessage, error) {
 	// Validate conversation membership
 	conv, err := u.repo.GetConversationByID(ctx, convID)
 	if err != nil {
@@ -108,6 +108,12 @@ func (u *privateChatUsecase) SendMessage(ctx context.Context, senderID, convID d
 		return nil, errors.New("cannot send message: blocking active")
 	}
 
+	// Check if sender is muted by recipient
+	muted, err := u.repo.IsMuted(ctx, otherUserID, senderID)
+	if err != nil {
+		muted = false
+	}
+
 	// Create message
 	msg := &domain.PrivateMessage{
 		ID:               domain.NewUUIDv7(),
@@ -117,6 +123,8 @@ func (u *privateChatUsecase) SendMessage(ctx context.Context, senderID, convID d
 		Content:          &content,
 		Metadata:         metadata,
 		ReplyToMessageID: replyToID,
+		IsEncrypted:      isEncrypted,
+		DisappearMode:    disappearMode,
 	}
 
 	err = u.repo.CreateMessage(ctx, msg)
@@ -124,16 +132,24 @@ func (u *privateChatUsecase) SendMessage(ctx context.Context, senderID, convID d
 		return nil, err
 	}
 
-	// Update Redis unread count
-	unreadKey := fmt.Sprintf("chat:unread:%s:%s", convID, otherUserID)
-	_ = u.redis.GetClient().Incr(ctx, unreadKey)
+	// Update Redis unread count only if not muted
+	if !muted {
+		unreadKey := fmt.Sprintf("chat:unread:%s:%s", convID, otherUserID)
+		_ = u.redis.GetClient().Incr(ctx, unreadKey)
+	}
 
 	// Set online status for sender (heartbeat)
 	onlineKey := fmt.Sprintf("chat:online:%s", senderID)
 	_ = u.redis.Set(ctx, onlineKey, "online", 5*time.Minute)
 
-	// TODO: Broadcast via WebSocket
-	// TODO: Trigger push notification if recipient offline
+	// Broadcast message via Redis Pub/Sub to reach Websocket clients
+	event := map[string]interface{}{
+		"event": "new_message",
+		"data":  msg,
+	}
+	payload, _ := json.Marshal(event)
+	roomID := "chat:" + convID.String()
+	u.redis.GetClient().Publish(ctx, roomID, payload)
 
 	return msg, nil
 }
@@ -279,16 +295,82 @@ func (u *privateChatUsecase) GetReactions(ctx context.Context, messageID domain.
 
 // Disappearing Messages
 func (u *privateChatUsecase) MarkAsViewed(ctx context.Context, viewerID, messageID domain.UUID) error {
-	// TODO: implement logic for view_once and 7s timer
-	return u.repo.TrackView(ctx, &domain.MessageView{
+	msg, err := u.repo.GetMessageByID(ctx, messageID)
+	if err != nil {
+		return err
+	}
+
+	// If already viewed or expired, nothing to do
+	if msg.ViewedAt != nil || msg.IsExpired {
+		return nil
+	}
+
+	// Update ViewedAt
+	now := time.Now()
+	msg.ViewedAt = &now
+
+	// Handle Disappearing Messages Logic
+	if msg.DisappearMode == "view_once" {
+		msg.IsExpired = true
+		expireTime := now.Add(2 * time.Second) // 2-second grace period for UI fadeout
+		msg.DisappearAt = &expireTime
+	} else if msg.DisappearMode != "" && msg.DisappearMode != "none" {
+		duration, err := time.ParseDuration(msg.DisappearMode)
+		if err == nil {
+			expireTime := now.Add(duration)
+			msg.DisappearAt = &expireTime
+		} else {
+			// Fallback: default to 7s
+			expireTime := now.Add(7 * time.Second)
+			msg.DisappearAt = &expireTime
+		}
+	}
+
+	err = u.repo.UpdateMessage(ctx, msg)
+	if err != nil {
+		return err
+	}
+
+	// Track view
+	_ = u.repo.TrackView(ctx, &domain.MessageView{
 		ID:        domain.NewUUIDv7(),
 		MessageID: messageID,
 		ViewerID:  viewerID,
 	})
+
+	// Broadcast read/viewed status via Redis Pub/Sub
+	event := map[string]interface{}{
+		"event": "message_viewed",
+		"data": map[string]string{
+			"message_id": messageID.String(),
+			"viewer_id":  viewerID.String(),
+		},
+	}
+	payload, _ := json.Marshal(event)
+	roomID := "chat:" + msg.ConversationID.String()
+	u.redis.GetClient().Publish(ctx, roomID, payload)
+
+	return nil
 }
 
 func (u *privateChatUsecase) NotifyScreenshot(ctx context.Context, userID, conversationID domain.UUID) error {
-	// TODO: increment screenshot counter in Redis, broadcast alert
+	// Increment screenshot count in Redis
+	countKey := fmt.Sprintf("chat:screenshot_count:%s", conversationID)
+	_ = u.redis.GetClient().Incr(ctx, countKey)
+
+	// Broadcast screenshot alert via Redis Pub/Sub
+	event := map[string]interface{}{
+		"event": "screenshot_detected",
+		"data": map[string]string{
+			"conversation_id": conversationID.String(),
+			"user_id":         userID.String(),
+			"message":         "Screenshot detected! Deteksi Tangkapan Layar terdeteksi pada layar obrolan privat Anda.",
+		},
+	}
+	payload, _ := json.Marshal(event)
+	roomID := "chat:" + conversationID.String()
+	u.redis.GetClient().Publish(ctx, roomID, payload)
+
 	return nil
 }
 
@@ -299,13 +381,24 @@ func (u *privateChatUsecase) ProcessExpiredMessages(ctx context.Context) error {
 	}
 
 	for _, m := range messages {
-		// Broadcast expiration
-		// Soft delete
-		u.repo.UpdateMessageDisappear(ctx, m.ID, nil) // Mark as expired
+		m.IsExpired = true
+		m.Content = nil // Wipe actual content for complete privacy!
+		_ = u.repo.UpdateMessage(ctx, m)
+
+		// Broadcast message expiration
+		event := map[string]interface{}{
+			"event": "message_expired",
+			"data": map[string]string{
+				"message_id": m.ID.String(),
+			},
+		}
+		payload, _ := json.Marshal(event)
+		roomID := "chat:" + m.ConversationID.String()
+		u.redis.GetClient().Publish(ctx, roomID, payload)
 	}
+
 	return nil
 }
-
 
 func (u *privateChatUsecase) UpdateSettings(ctx context.Context, userID, convID domain.UUID, settings map[string]interface{}) error {
 	// Filter allowed settings
@@ -330,4 +423,38 @@ func (u *privateChatUsecase) UnblockUser(ctx context.Context, blockerID, blocked
 
 func (u *privateChatUsecase) GetBlockedUsers(ctx context.Context, userID domain.UUID) ([]*domain.User, error) {
 	return u.repo.ListBlockedUsers(ctx, userID)
+}
+
+func (u *privateChatUsecase) MuteUser(ctx context.Context, blockerID, blockedID domain.UUID, durationMinutes int) error {
+	var expiresAt *time.Time
+	if durationMinutes > 0 {
+		exp := time.Now().Add(time.Duration(durationMinutes) * time.Minute)
+		expiresAt = &exp
+	}
+	return u.repo.MuteUser(ctx, blockerID, blockedID, expiresAt)
+}
+
+func (u *privateChatUsecase) UnmuteUser(ctx context.Context, blockerID, blockedID domain.UUID) error {
+	return u.repo.UnmuteUser(ctx, blockerID, blockedID)
+}
+
+func (u *privateChatUsecase) GetMutedUsers(ctx context.Context, userID domain.UUID) ([]*domain.User, error) {
+	return u.repo.ListMutedUsers(ctx, userID)
+}
+
+func (u *privateChatUsecase) UpdateUserPrivacy(ctx context.Context, userID domain.UUID, isPrivate, isIncognito bool) error {
+	return u.repo.UpdateUserPrivacySettings(ctx, userID, isPrivate, isIncognito)
+}
+
+func (u *privateChatUsecase) RegisterE2EEKey(ctx context.Context, userID domain.UUID, publicKey string, keyType string) error {
+	key := &domain.UserE2EEKey{
+		UserID:    userID,
+		PublicKey: publicKey,
+		KeyType:   keyType,
+	}
+	return u.repo.SaveE2EEKey(ctx, key)
+}
+
+func (u *privateChatUsecase) GetE2EEKey(ctx context.Context, userID domain.UUID) (*domain.UserE2EEKey, error) {
+	return u.repo.GetE2EEKey(ctx, userID)
 }

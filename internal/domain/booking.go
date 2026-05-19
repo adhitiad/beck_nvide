@@ -137,6 +137,8 @@ type BookingUsecase interface {
 	AcceptBooking(ctx context.Context, hostID, bookingID UUID) error
 	RejectBooking(ctx context.Context, hostID, bookingID UUID, reason string) error
 	CancelBooking(ctx context.Context, userID, bookingID UUID, reason string) error
+	ListBookingsByHost(ctx context.Context, hostID UUID, status string) ([]*Booking, error)
+	ListBookingsByUser(ctx context.Context, userID UUID, status string) ([]*Booking, error)
 	
 	// Execution
 	StartSession(ctx context.Context, bookingID UUID) (string, error) // Returns join token

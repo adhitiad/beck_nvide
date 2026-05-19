@@ -1,0 +1,19 @@
+{
+  "unauthorized": "Truy cập không được phép. Vui lòng đăng nhập trước.",
+  "forbidden": "Truy cập bị từ chối. Bạn không có quyền.",
+  "not_found": "Không tìm thấy tài nguyên được yêu cầu.",
+  "internal_error": "Lỗi máy chủ nội bộ. Vui lòng thử lại sau.",
+  "validation_error": "Lỗi xác thực dữ liệu: %s",
+  "invalid_request": "Nội dung yêu cầu hoặc tham số không hợp lệ.",
+  "invalid_id": "Định dạng ID không hợp lệ.",
+  "success_kyc_submit": "Gửi KYC thành công và hiện đang được xem xét.",
+  "success_agency_submit": "Gửi xác minh doanh nghiệp đại lý thành công.",
+  "success_ban": "Người dùng và dấu vân tay thiết bị liên quan đã bị cấm vĩnh viễn.",
+  "success_onboarding_step": "Đánh dấu bước hoàn thành thành công.",
+  "lgbt_policy_ban": "Tài khoản của bạn đã bị khóa vĩnh viễn do vi phạm chính sách nền tảng.",
+  "region_restricted": "Không chấp nhận KYC từ quốc gia/khu vực này.",
+  "no_active_vip_sub": "Không tìm thấy gói đăng ký VIP AI Clip hoạt động.",
+  "quota_exceeded": "Hạn ngạch VIP AI Clip đã được sử dụng hết trong chu kỳ thanh toán này.",
+  "success_vip_sub": "Người dùng đăng ký thành công Gói VIP AI Clip: %s",
+  "insufficient_balance": "Số dư ví không đủ hoặc lỗi trừ tiền."
+}

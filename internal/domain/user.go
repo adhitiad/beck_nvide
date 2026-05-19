@@ -22,6 +22,8 @@ type User struct {
 	UserLevel         int        `json:"user_level" db:"user_level"`
 	HostXP            int64      `json:"host_xp" db:"host_xp"`
 	HostLevel         int        `json:"host_level" db:"host_level"`
+	IsPrivateProfile  bool       `json:"is_private_profile" db:"is_private_profile"`
+	IsIncognito       bool       `json:"is_incognito" db:"is_incognito"`
 	CreatedAt         time.Time  `json:"created_at" db:"created_at"`
 	UpdatedAt         time.Time  `json:"updated_at" db:"updated_at"`
 

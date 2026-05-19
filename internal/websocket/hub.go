@@ -630,3 +630,8 @@ func (h *Hub) IsStreamRoom(roomID string) bool {
 	err := h.db.QueryRow(context.Background(), query, roomID).Scan(&exists)
 	return err == nil && exists
 }
+
+// GetBroker returns the underlying broker instance
+func (h *Hub) GetBroker() broker.Broker {
+	return h.broker
+}

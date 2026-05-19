@@ -307,3 +307,7 @@ func (u *paidInteractionUsecase) ProcessBillingTick(ctx context.Context, session
 
 	return nil
 }
+
+func (u *paidInteractionUsecase) GetCallSession(ctx context.Context, sessionID domain.UUID) (*domain.CallSession, error) {
+	return u.repo.GetCallSessionByID(ctx, sessionID)
+}

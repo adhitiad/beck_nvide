@@ -180,11 +180,19 @@ func (r *privateChatRepository) CreateMessage(ctx context.Context, msg *domain.P
 
 	// Insert message
 	queryMsg := `
-		INSERT INTO messages (id, conversation_id, sender_id, type, content, metadata, reply_to_message_id, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+		INSERT INTO messages (
+			id, conversation_id, sender_id, type, content, metadata, reply_to_message_id,
+			is_encrypted, disappear_mode, disappear_at, viewed_at, is_screenshot_detected,
+			is_expired, is_forwarded, created_at, updated_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW())
 		RETURNING created_at, updated_at
 	`
-	err = tx.QueryRow(ctx, queryMsg, msg.ID, msg.ConversationID, msg.SenderID, msg.Type, msg.Content, msg.Metadata, msg.ReplyToMessageID).Scan(&msg.CreatedAt, &msg.UpdatedAt)
+	err = tx.QueryRow(ctx, queryMsg,
+		msg.ID, msg.ConversationID, msg.SenderID, msg.Type, msg.Content, msg.Metadata, msg.ReplyToMessageID,
+		msg.IsEncrypted, msg.DisappearMode, msg.DisappearAt, msg.ViewedAt, msg.IsScreenshot,
+		msg.IsExpired, msg.IsForwarded,
+	).Scan(&msg.CreatedAt, &msg.UpdatedAt)
 	if err != nil {
 		return err
 	}
@@ -216,14 +224,17 @@ func (r *privateChatRepository) CreateMessage(ctx context.Context, msg *domain.P
 
 func (r *privateChatRepository) GetMessageByID(ctx context.Context, id domain.UUID) (*domain.PrivateMessage, error) {
 	query := `
-		SELECT id, conversation_id, sender_id, type, content, metadata, reply_to_message_id, is_edited, is_deleted, created_at, updated_at
+		SELECT id, conversation_id, sender_id, type, content, metadata, reply_to_message_id, is_edited, is_deleted,
+		       is_encrypted, disappear_mode, disappear_at, viewed_at, is_screenshot_detected, is_expired, is_forwarded,
+		       created_at, updated_at
 		FROM messages
 		WHERE id = $1
 	`
 	msg := &domain.PrivateMessage{}
 	err := r.db.QueryRow(ctx, query, id).Scan(
 		&msg.ID, &msg.ConversationID, &msg.SenderID, &msg.Type, &msg.Content, &msg.Metadata, &msg.ReplyToMessageID,
-		&msg.IsEdited, &msg.IsDeleted, &msg.CreatedAt, &msg.UpdatedAt,
+		&msg.IsEdited, &msg.IsDeleted, &msg.IsEncrypted, &msg.DisappearMode, &msg.DisappearAt, &msg.ViewedAt,
+		&msg.IsScreenshot, &msg.IsExpired, &msg.IsForwarded, &msg.CreatedAt, &msg.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -233,9 +244,11 @@ func (r *privateChatRepository) GetMessageByID(ctx context.Context, id domain.UU
 
 func (r *privateChatRepository) ListMessages(ctx context.Context, convID domain.UUID, cursorTime *time.Time, cursorID *domain.UUID, limit int) ([]*domain.PrivateMessage, error) {
 	query := `
-		SELECT id, conversation_id, sender_id, type, content, metadata, reply_to_message_id, is_edited, is_deleted, created_at, updated_at
+		SELECT id, conversation_id, sender_id, type, content, metadata, reply_to_message_id, is_edited, is_deleted,
+		       is_encrypted, disappear_mode, disappear_at, viewed_at, is_screenshot_detected, is_expired, is_forwarded,
+		       created_at, updated_at
 		FROM messages
-		WHERE conversation_id = $1
+		WHERE conversation_id = $1 AND is_expired = false
 	`
 	args := []interface{}{convID}
 	argIdx := 2
@@ -260,7 +273,8 @@ func (r *privateChatRepository) ListMessages(ctx context.Context, convID domain.
 		msg := &domain.PrivateMessage{}
 		err := rows.Scan(
 			&msg.ID, &msg.ConversationID, &msg.SenderID, &msg.Type, &msg.Content, &msg.Metadata, &msg.ReplyToMessageID,
-			&msg.IsEdited, &msg.IsDeleted, &msg.CreatedAt, &msg.UpdatedAt,
+			&msg.IsEdited, &msg.IsDeleted, &msg.IsEncrypted, &msg.DisappearMode, &msg.DisappearAt, &msg.ViewedAt,
+			&msg.IsScreenshot, &msg.IsExpired, &msg.IsForwarded, &msg.CreatedAt, &msg.UpdatedAt,
 		)
 		if err != nil {
 			return nil, err
@@ -273,10 +287,12 @@ func (r *privateChatRepository) ListMessages(ctx context.Context, convID domain.
 func (r *privateChatRepository) UpdateMessage(ctx context.Context, msg *domain.PrivateMessage) error {
 	query := `
 		UPDATE messages 
-		SET content = $1, is_edited = true, updated_at = NOW()
-		WHERE id = $2
+		SET content = $1, is_edited = $2, is_deleted = $3, is_expired = $4,
+		    disappear_at = $5, viewed_at = $6, is_screenshot_detected = $7,
+		    is_forwarded = $8, updated_at = NOW()
+		WHERE id = $9
 	`
-	_, err := r.db.Exec(ctx, query, msg.Content, msg.ID)
+	_, err := r.db.Exec(ctx, query, msg.Content, msg.IsEdited, msg.IsDeleted, msg.IsExpired, msg.DisappearAt, msg.ViewedAt, msg.IsScreenshot, msg.IsForwarded, msg.ID)
 	return err
 }
 
@@ -457,4 +473,94 @@ func (r *privateChatRepository) ListBlockedUsers(ctx context.Context, blockerID 
 		users = append(users, user)
 	}
 	return users, nil
+}
+
+func (r *privateChatRepository) MuteUser(ctx context.Context, blockerID, blockedID domain.UUID, expiresAt *time.Time) error {
+	query := `
+		INSERT INTO user_mutes (id, muter_id, muted_id, expires_at, created_at)
+		VALUES (uuid_generate_v7(), $1, $2, $3, NOW())
+		ON CONFLICT (muter_id, muted_id) DO UPDATE SET expires_at = $3, created_at = NOW()
+	`
+	_, err := r.db.Exec(ctx, query, blockerID, blockedID, expiresAt)
+	return err
+}
+
+func (r *privateChatRepository) UnmuteUser(ctx context.Context, blockerID, blockedID domain.UUID) error {
+	query := `DELETE FROM user_mutes WHERE muter_id = $1 AND muted_id = $2`
+	_, err := r.db.Exec(ctx, query, blockerID, blockedID)
+	return err
+}
+
+func (r *privateChatRepository) IsMuted(ctx context.Context, user1, user2 domain.UUID) (bool, error) {
+	var exists bool
+	query := `
+		SELECT EXISTS(
+			SELECT 1 FROM user_mutes 
+			WHERE muter_id = $1 AND muted_id = $2 AND (expires_at IS NULL OR expires_at > NOW())
+		)
+	`
+	err := r.db.QueryRow(ctx, query, user1, user2).Scan(&exists)
+	return exists, err
+}
+
+func (r *privateChatRepository) ListMutedUsers(ctx context.Context, userID domain.UUID) ([]*domain.User, error) {
+	query := `
+		SELECT u.id, u.username, u.avatar_url
+		FROM users u
+		JOIN user_mutes m ON u.id = m.muted_id
+		WHERE m.muter_id = $1 AND (m.expires_at IS NULL OR m.expires_at > NOW())
+	`
+	rows, err := r.db.Query(ctx, query, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	users := make([]*domain.User, 0)
+	for rows.Next() {
+		user := &domain.User{}
+		err := rows.Scan(&user.ID, &user.Username, &user.AvatarURL)
+		if err != nil {
+			return nil, err
+		}
+		users = append(users, user)
+	}
+	return users, nil
+}
+
+func (r *privateChatRepository) SaveE2EEKey(ctx context.Context, key *domain.UserE2EEKey) error {
+	query := `
+		INSERT INTO user_e2ee_keys (user_id, public_key, key_type, created_at, updated_at)
+		VALUES ($1, $2, $3, NOW(), NOW())
+		ON CONFLICT (user_id) DO UPDATE SET public_key = $2, key_type = $3, updated_at = NOW()
+	`
+	_, err := r.db.Exec(ctx, query, key.UserID, key.PublicKey, key.KeyType)
+	return err
+}
+
+func (r *privateChatRepository) GetE2EEKey(ctx context.Context, userID domain.UUID) (*domain.UserE2EEKey, error) {
+	query := `
+		SELECT user_id, public_key, key_type, created_at, updated_at
+		FROM user_e2ee_keys
+		WHERE user_id = $1
+	`
+	key := &domain.UserE2EEKey{}
+	err := r.db.QueryRow(ctx, query, userID).Scan(&key.UserID, &key.PublicKey, &key.KeyType, &key.CreatedAt, &key.UpdatedAt)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, domain.ErrNotFound
+		}
+		return nil, err
+	}
+	return key, nil
+}
+
+func (r *privateChatRepository) UpdateUserPrivacySettings(ctx context.Context, userID domain.UUID, isPrivate, isIncognito bool) error {
+	query := `
+		UPDATE users
+		SET is_private_profile = $2, is_incognito = $3, updated_at = NOW()
+		WHERE id = $1
+	`
+	_, err := r.db.Exec(ctx, query, userID, isPrivate, isIncognito)
+	return err
 }

@@ -18,14 +18,24 @@ func SetupRouter(
 	webrtcHandler *WebRTCHandler,
 	vodHandler *VODHandler,
 	monetizationHandler *MonetizationHandler,
+	extraMonetizationHandler *ExtraMonetizationHandler,
 	healthHandler *HealthHandler,
 	cryptoHandler *CryptoHandler,
 	pkHandler *PKBattleHandler,
 	moderationHandler *ModerationHandler,
+	creatorTokenHandler *CreatorTokenHandler,
+	predictionHandler *PredictionHandler,
+	drmHandler *DRMHandler,
+	recommendationHandler *RecommendationHandler,
+	clipHandler *ClipHandler,
+	kycHandler *KYCHandler,
+	clipSubHandler *ClipSubscriptionHandler,
 	authMiddleware *middleware.AuthMiddleware,
 	rbacMiddleware *middleware.RBACMiddleware,
 	rateLimitMiddleware *middleware.RateLimitMiddleware,
 	idempotencyMiddleware *wallet.IdempotencyManager,
+	banChecker *middleware.BanChecker,
+	clipQuota *middleware.ClipQuotaMiddleware,
 	logger *zap.Logger,
 ) *mux.Router {
 	router := mux.NewRouter()
@@ -35,6 +45,7 @@ func SetupRouter(
 	router.Use(middleware.LoggerMiddleware(logger)) // Log HTTP requests with correlation tracing
 	router.Use(middleware.RecoveryMiddleware(logger))
 	router.Use(middleware.MetricsMiddleware) // Apply Prometheus Metrics Middleware!
+	router.Use(middleware.NewI18nMiddleware().Middleware) // Apply Multi-Language i18n Middleware!
 	if idempotencyMiddleware != nil {
 		router.Use(idempotencyMiddleware.Middleware())
 	}
@@ -55,6 +66,43 @@ func SetupRouter(
 	// Protected routes group
 	protected := apiV1.PathPrefix("").Subrouter()
 	protected.Use(authMiddleware.Middleware)
+	if banChecker != nil {
+		protected.Use(banChecker.Middleware)
+	}
+	if clipQuota != nil {
+		protected.Use(clipQuota.Middleware)
+	}
+
+	// ===== KYC & ONBOARDING ROUTES =====
+	if kycHandler != nil {
+		// Use RegionValidator only on /kyc/submit
+		kycRouter := protected.PathPrefix("/kyc").Subrouter()
+		kycRouter.Use(middleware.RegionValidator)
+		kycRouter.HandleFunc("/submit", kycHandler.SubmitKYC).Methods("POST")
+		
+		// Other KYC routes
+		protected.HandleFunc("/kyc/status", kycHandler.GetStatus).Methods("GET")
+		protected.HandleFunc("/kyc/agency/submit", kycHandler.SubmitAgency).Methods("POST")
+		
+		// Onboarding Checklist routes
+		protected.HandleFunc("/onboarding/user", kycHandler.GetOnboardingChecklist).Methods("GET")
+		protected.HandleFunc("/onboarding/host", kycHandler.GetOnboardingChecklist).Methods("GET")
+		protected.HandleFunc("/onboarding/agency", kycHandler.GetOnboardingChecklist).Methods("GET")
+		protected.HandleFunc("/onboarding/step/complete", kycHandler.CompleteOnboardingStep).Methods("POST")
+
+		// Admin KYC & Ban
+		protected.HandleFunc("/admin/kyc/{id}/verify", kycHandler.ApproveKYC).Methods("PUT")
+		protected.HandleFunc("/admin/kyc/{id}/reject", kycHandler.RejectKYC).Methods("PUT")
+		protected.HandleFunc("/admin/users/{id}/ban-permanent", kycHandler.BanUserPermanent).Methods("POST")
+	}
+
+	// ===== VIP CLIP SUBSCRIPTION ROUTES =====
+	if clipSubHandler != nil {
+		protected.HandleFunc("/clip-subscriptions/plans", clipSubHandler.ListPlans).Methods("GET")
+		protected.HandleFunc("/clip-subscriptions/subscribe", clipSubHandler.Subscribe).Methods("POST")
+		protected.HandleFunc("/clip-subscriptions/status", clipSubHandler.GetStatus).Methods("GET")
+		protected.HandleFunc("/clip-subscriptions/history", clipSubHandler.GetHistory).Methods("GET")
+	}
 
 	// Auth routes
 	protected.HandleFunc("/auth/logout", handler.Logout).Methods("POST")
@@ -102,6 +150,14 @@ func SetupRouter(
 	protected.HandleFunc("/messages/{id}/reactions", handler.ToggleReaction).Methods("POST")
 	protected.HandleFunc("/messages/{id}/view", handler.MarkMessageViewed).Methods("POST")
 	protected.HandleFunc("/users/{id}/block", handler.BlockUser).Methods("POST")
+	protected.HandleFunc("/users/me/e2ee-key", handler.RegisterE2EEKey).Methods("POST")
+	protected.HandleFunc("/users/{id}/e2ee-key", handler.GetE2EEKey).Methods("GET")
+	protected.HandleFunc("/users/{id}/mute", handler.MuteUser).Methods("POST")
+	protected.HandleFunc("/users/{id}/unmute", handler.UnmuteUser).Methods("POST")
+	protected.HandleFunc("/users/me/mutes", handler.GetMutedUsers).Methods("GET")
+	protected.HandleFunc("/users/me/privacy", handler.UpdatePrivacySettings).Methods("PUT")
+	protected.HandleFunc("/profile/privacy", handler.UpdatePrivacySettings).Methods("PUT")
+	protected.HandleFunc("/conversations/{id}/screenshot", handler.NotifyScreenshot).Methods("POST")
 
 	// Paid Interaction routes
 	protected.HandleFunc("/conversations/{id}/unlock", handler.UnlockChat).Methods("POST")
@@ -110,12 +166,15 @@ func SetupRouter(
 	protected.HandleFunc("/calls/request", handler.RequestCall).Methods("POST")
 	protected.HandleFunc("/calls/{id}/accept", handler.AcceptCall).Methods("POST")
 	protected.HandleFunc("/calls/{id}/end", handler.EndCall).Methods("POST")
+	protected.HandleFunc("/calls/{id}", handler.GetCallSession).Methods("GET")
 
 	// Booking routes
 	protected.HandleFunc("/hosts/me/schedules", handler.SetHostSchedule).Methods("POST")
 	router.HandleFunc("/api/v1/hosts/{id}/available-slots", handler.GetAvailableSlots).Methods("GET")
 	protected.HandleFunc("/bookings", handler.RequestBooking).Methods("POST")
+	protected.HandleFunc("/bookings", handler.ListMyBookings).Methods("GET")
 	hostBookings := protected.PathPrefix("/host/bookings").Subrouter()
+	hostBookings.HandleFunc("", handler.ListHostBookings).Methods("GET")
 	hostBookings.HandleFunc("/{id}/accept", handler.AcceptBooking).Methods("POST")
 	hostBookings.HandleFunc("/{id}/reject", handler.RejectBooking).Methods("POST")
 
@@ -152,6 +211,7 @@ func SetupRouter(
 	// WebSocket routes (Chat & Call)
 	router.HandleFunc("/ws/rooms/{room_id}", handler.ServeWS).Methods("GET")
 	router.HandleFunc("/ws/chat/{stream_id}", handler.ServeStreamChatWS).Methods("GET")
+	router.HandleFunc("/ws/private-chat/{conversation_id}", handler.ServeChatWS).Methods("GET")
 	router.HandleFunc("/ws/call/{session_id}", handler.ServeCallWS).Methods("GET")
 
 	// WebRTC Signaling (WebSocket)
@@ -172,11 +232,26 @@ func SetupRouter(
 	apiV1.HandleFunc("/streams/trending", webrtcHandler.GetTrendingStreams).Methods("GET")
 	apiV1.HandleFunc("/vods", vodHandler.GetVODList).Methods("GET")
 
-	// VOD Management
 	protected.HandleFunc("/vods", vodHandler.UploadVOD).Methods("POST")
 	apiV1.HandleFunc("/vods/{vod_id}", vodHandler.GetVODDetail).Methods("GET")
 	protected.HandleFunc("/vods/{vod_id}/visibility", vodHandler.UpdateVisibility).Methods("PUT")
 	protected.HandleFunc("/vods/{vod_id}", vodHandler.DeleteVOD).Methods("DELETE")
+
+	// DRM & Video Playback Terenkripsi (Fitur 3)
+	protected.HandleFunc("/vods/{vod_id}/token", drmHandler.GenerateToken).Methods("POST")
+	router.HandleFunc("/api/v1/vods/{vod_id}/playlist.m3u8", drmHandler.ServePlaylist).Methods("GET")
+	router.HandleFunc("/api/v1/vods/{vod_id}/key", drmHandler.ServeKey).Methods("GET")
+	router.HandleFunc("/api/v1/vods/{vod_id}/segments/{segment}", drmHandler.ServeSegment).Methods("GET")
+
+	// AI Recommendation System (Fitur 4)
+	protected.HandleFunc("/recommendations/interactions", recommendationHandler.TrackInteraction).Methods("POST")
+	protected.HandleFunc("/recommendations/streams", recommendationHandler.GetRecommendedStreams).Methods("GET")
+	protected.HandleFunc("/recommendations/vods", recommendationHandler.GetRecommendedVODs).Methods("GET")
+
+	// AI Clip Highlights System (Fitur 5)
+	protected.HandleFunc("/streams/{stream_id}/clips/trigger", clipHandler.TriggerClip).Methods("POST")
+	apiV1.HandleFunc("/streams/{stream_id}/clips", clipHandler.GetStreamClips).Methods("GET")
+	apiV1.HandleFunc("/clips/trending", clipHandler.GetTrendingClips).Methods("GET")
 
 	// Static files (local storage)
 	router.PathPrefix("/uploads/").Handler(http.StripPrefix("/uploads/", http.FileServer(http.Dir("./uploads"))))
@@ -197,8 +272,11 @@ func SetupRouter(
 	// Host & Agency
 	protected.HandleFunc("/host/apply", monetizationHandler.ApplyHost).Methods("POST")
 	protected.HandleFunc("/agencies", monetizationHandler.CreateAgency).Methods("POST")
+	protected.HandleFunc("/agencies/me", monetizationHandler.GetMyAgency).Methods("GET")
 	protected.HandleFunc("/agencies/{agency_id}/invite", monetizationHandler.InviteHost).Methods("POST")
 	protected.HandleFunc("/agencies/{agency_id}/hosts", monetizationHandler.ListAgencyHosts).Methods("GET")
+	protected.HandleFunc("/agencies/{agency_id}/accept", monetizationHandler.AcceptInvitation).Methods("POST")
+	protected.HandleFunc("/host/agency", monetizationHandler.GetHostRelation).Methods("GET")
 
 	// Payment
 	protected.HandleFunc("/payment/deposit", monetizationHandler.RequestDeposit).Methods("POST")
@@ -211,6 +289,22 @@ func SetupRouter(
 	protected.HandleFunc("/admin/host-applications/{application_id}/reject", monetizationHandler.RejectHostApplication).Methods("POST")
 	protected.HandleFunc("/admin/withdrawals/{tx_id}/approve", monetizationHandler.ApproveWithdrawal).Methods("POST")
 	protected.HandleFunc("/admin/withdrawals/{tx_id}/reject", monetizationHandler.RejectWithdrawal).Methods("POST")
+
+	// ===== CREATOR TOKEN ROUTES =====
+	if creatorTokenHandler != nil {
+		protected.HandleFunc("/creators/{host_id}/tokens", creatorTokenHandler.IssueToken).Methods("POST")
+		router.HandleFunc("/api/v1/creators/{host_id}/tokens", creatorTokenHandler.GetTokenInfo).Methods("GET")
+		protected.HandleFunc("/tokens/buy", creatorTokenHandler.BuyToken).Methods("POST")
+		protected.HandleFunc("/users/{id}/tokens", creatorTokenHandler.GetUserBalances).Methods("GET")
+	}
+
+	// ===== PREDICTION MARKET ROUTES =====
+	if predictionHandler != nil {
+		protected.HandleFunc("/streams/{id}/predictions", predictionHandler.CreatePrediction).Methods("POST")
+		router.HandleFunc("/api/v1/streams/{id}/predictions", predictionHandler.GetActivePredictions).Methods("GET")
+		protected.HandleFunc("/predictions/{id}/bet", predictionHandler.PlaceBet).Methods("POST")
+		protected.HandleFunc("/predictions/{id}/resolve", predictionHandler.ResolvePrediction).Methods("PUT")
+	}
 
 	// ===== CRYPTO ROUTES =====
 	protected.HandleFunc("/crypto/deposit-address", cryptoHandler.GetDepositAddress).Methods("GET")
@@ -227,6 +321,27 @@ func SetupRouter(
 	// ===== AUTO-MODERATION & SAFETY ENGINE ROUTES =====
 	if moderationHandler != nil {
 		RegisterModerationRoutes(protected, moderationHandler)
+	}
+
+	// ===== EXTRA MONETIZATION ROUTES =====
+	if extraMonetizationHandler != nil {
+		// Paid Rooms
+		protected.HandleFunc("/rooms", extraMonetizationHandler.CreatePaidRoom).Methods("POST")
+		protected.HandleFunc("/rooms/{id}/join", extraMonetizationHandler.JoinPaidRoom).Methods("POST")
+
+		// Interactive Toys (Lovense)
+		protected.HandleFunc("/hosts/me/devices", extraMonetizationHandler.RegisterHostDevice).Methods("POST")
+		protected.HandleFunc("/hosts/me/devices", extraMonetizationHandler.GetHostDevices).Methods("GET")
+		protected.HandleFunc("/streams/{id}/toys/control", extraMonetizationHandler.ControlToys).Methods("POST")
+
+		// Show Requests
+		protected.HandleFunc("/streams/{id}/requests", extraMonetizationHandler.SubmitShowRequest).Methods("POST")
+		protected.HandleFunc("/requests/{id}/accept", extraMonetizationHandler.AcceptShowRequest).Methods("PUT")
+		protected.HandleFunc("/requests/{id}/reject", extraMonetizationHandler.RejectShowRequest).Methods("PUT")
+
+		// AI Companion
+		protected.HandleFunc("/ai/chat", extraMonetizationHandler.SendAIChatMessage).Methods("POST")
+		protected.HandleFunc("/ai/chat/history", extraMonetizationHandler.GetAIChatHistory).Methods("GET")
 	}
 
 	// Health check

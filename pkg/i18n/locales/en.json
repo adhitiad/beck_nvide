@@ -1,0 +1,19 @@
+{
+  "unauthorized": "Unauthorized access. Please log in first.",
+  "forbidden": "Access denied. You do not have permission.",
+  "not_found": "The requested resource was not found.",
+  "internal_error": "Internal server error. Please try again later.",
+  "validation_error": "Validation error: %s",
+  "invalid_request": "Invalid request body or parameters.",
+  "invalid_id": "Invalid ID format.",
+  "success_kyc_submit": "KYC submitted successfully and is currently under review.",
+  "success_agency_submit": "Agency business verification submitted successfully.",
+  "success_ban": "User and associated fingerprints have been permanently banned.",
+  "success_onboarding_step": "Step marked as completed successfully.",
+  "lgbt_policy_ban": "Your account has been permanently blocked due to a policy violation.",
+  "region_restricted": "KYC not accepted from this country/region.",
+  "no_active_vip_sub": "No active VIP AI Clip subscription found.",
+  "quota_exceeded": "VIP AI Clip quota has been fully consumed for this billing cycle.",
+  "success_vip_sub": "User successfully subscribed to VIP AI Clip Plan: %s",
+  "insufficient_balance": "Insufficient wallet balance or debit error."
+}
