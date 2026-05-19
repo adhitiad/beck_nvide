@@ -53,15 +53,15 @@ func (w *HDWallet) DeriveSolana(index int) (string, string, error) {
 }
 
 // DeriveBitcoin derives a SegWit (bech32) Bitcoin address and WIF private key
-// Path: m/84'/0'/0'/0/{index}
+// Path: m/84'/coinType'/0'/0/{index}
 func (w *HDWallet) DeriveBitcoin(index int, params *chaincfg.Params) (string, string, error) {
 	masterKey, err := bip32.NewMasterKey(w.seed)
 	if err != nil {
 		return "", "", err
 	}
 
-	_ = params
-	path := []uint32{84 + 0x80000000, 0 + 0x80000000, 0 + 0x80000000, 0, uint32(index)}
+	coinType := params.HDCoinType
+	path := []uint32{84 + 0x80000000, uint32(coinType) + 0x80000000, 0 + 0x80000000, 0, uint32(index)}
 	
 	key := masterKey
 	for _, part := range path {

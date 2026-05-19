@@ -20,6 +20,7 @@ type withdrawalUsecase struct {
 	txRepo     domain.TransactionRepository
 	agencyRepo domain.AgencyRepository
 	userRepo   domain.UserRepository
+	payoutUC   domain.PayoutUsecase
 	redis      *redis.Client
 	logger     *zap.Logger
 }
@@ -30,6 +31,7 @@ func NewWithdrawalUsecase(
 	txRepo domain.TransactionRepository,
 	agencyRepo domain.AgencyRepository,
 	userRepo domain.UserRepository,
+	payoutUC domain.PayoutUsecase,
 	redis *redis.Client,
 	logger *zap.Logger,
 ) domain.WithdrawalUsecase {
@@ -39,6 +41,7 @@ func NewWithdrawalUsecase(
 		txRepo:     txRepo,
 		agencyRepo: agencyRepo,
 		userRepo:   userRepo,
+		payoutUC:   payoutUC,
 		redis:      redis,
 		logger:     logger,
 	}
@@ -50,13 +53,13 @@ func (u *withdrawalUsecase) CalculatePreview(ctx context.Context, userID domain.
 	hasAgency := agencyRel != nil && agencyRel.Status == domain.AgencyHostActive
 
 	gross := amount
-	feePlatform := gross * 15 / 100       // 15% platform fee
-	feeProcessing := gross * 35 / 1000    // 3.5% processing fee
-	feeTax := gross * 10 / 100            // 10% tax PPh
+	feePlatform := gross * 15 / 100    // 15% platform fee
+	feeProcessing := gross * 35 / 1000 // 3.5% processing fee
+	feeTax := gross * 10 / 100         // 10% tax PPh
 
 	var feeAgency int64
 	if hasAgency {
-		feeAgency = gross * 67 / 1000      // 6.7% agency fee
+		feeAgency = gross * 67 / 1000 // 6.7% agency fee
 	}
 
 	totalFee := feePlatform + feeProcessing + feeTax + feeAgency
@@ -124,6 +127,16 @@ func (u *withdrawalUsecase) RequestWithdrawal(ctx context.Context, userID domain
 	preview, err := u.CalculatePreview(ctx, userID, amount)
 	if err != nil {
 		return nil, err
+	}
+
+	// Resolve payout target from primary payout method when available.
+	if u.payoutUC != nil {
+		resolvedMethod, resolvedTarget, resolveErr := u.payoutUC.ResolveWithdrawalTarget(ctx, userID)
+		if resolveErr != nil {
+			return nil, resolveErr
+		}
+		method = resolvedMethod
+		bankInfo = resolvedTarget
 	}
 
 	totalFee := preview["total_fee"].(int64)

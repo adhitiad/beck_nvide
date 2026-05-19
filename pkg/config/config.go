@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"time"
@@ -54,6 +55,9 @@ type Config struct {
 	DuitkuCallbackURL  string `env:"DUITKU_CALLBACK_URL"`
 	DuitkuReturnURL    string `env:"DUITKU_RETURN_URL"`
 
+	// OpenAI (AI chat / monetisation)
+	OpenAIAPIKey string `env:"OPENAI_API_KEY"`
+
 	// Crypto and Blockchain Configurations
 	CryptoEncryptionKey string `env:"CRYPTO_ENCRYPTION_KEY" default:"32-byte-long-aes-key-for-crypto"`
 	SolanaRPCURL        string `env:"SOLANA_RPC_URL" default:"https://api.devnet.solana.com"`
@@ -62,6 +66,18 @@ type Config struct {
 
 	// KYC Region Restriction
 	AllowedRegions string `env:"ALLOWED_REGIONS" default:"indonesia,philippines,filipina,thailand,malaysia,myanmar,cambodia,kamboja,vietnam,brazil,china,tiongkok,japan,jepang,india,kazakhstan"`
+
+	// Payout Verification
+	MicroDepositVerifyEnabled bool `env:"MICRO_DEPOSIT_VERIFY_ENABLED" default:"false"`
+
+	// Mux Streaming
+	MuxTokenID     string `env:"MUX_TOKEN_ID"`
+	MuxTokenSecret string `env:"MUX_TOKEN_SECRET"`
+
+	// Web Push VAPID
+	VAPIDPublicKey  string `env:"VAPID_PUBLIC_KEY"`
+	VAPIDPrivateKey string `env:"VAPID_PRIVATE_KEY"`
+	VAPIDSubject    string `env:"VAPID_SUBJECT" default:"mailto:admin@nvide.live"`
 }
 
 var globalConfig *Config
@@ -84,7 +100,7 @@ func Load() *Config {
 			return value
 		}
 		return defaultValue
-	}; _ = getEnv
+	}
 
 	// Helper to get env as int
 	getEnvInt := func(key string, defaultValue int) int {
@@ -94,7 +110,7 @@ func Load() *Config {
 			}
 		}
 		return defaultValue
-	}; _ = getEnvInt
+	}
 
 	// Helper to get env as bool
 	getEnvBool := func(key string, defaultValue bool) bool {
@@ -104,7 +120,7 @@ func Load() *Config {
 			}
 		}
 		return defaultValue
-	}; _ = getEnvBool
+	}
 
 	// Helper to get env as duration
 	getEnvDuration := func(key string, defaultValue time.Duration) time.Duration {
@@ -114,7 +130,7 @@ func Load() *Config {
 			}
 		}
 		return defaultValue
-	}; _ = getEnvDuration
+	}
 
 	// Server
 	cfg.ServerPort = getEnv("SERVER_PORT", "8080")
@@ -138,10 +154,20 @@ func Load() *Config {
 	cfg.RedisDB = getEnvInt("REDIS_DB", 0)
 	cfg.RedisPoolSize = getEnvInt("REDIS_POOL_SIZE", 10)
 
-	// JWT
-	cfg.JWTSecret = getEnv("JWT_SECRET", "change-me-in-production")
+	// JWT — F-012 / F-003 guard: fail fast if JWT_SECRET is absent or still a known placeholder
+	cfg.JWTSecret = getEnv("JWT_SECRET", "")
+	const jwttPlaceholder = "change-this-super-secret-key-in-production-use-random-256-bit"
+	const jwttPlaceholderOld = "change-me-in-production"
 	cfg.JWTExpiry = getEnvDuration("JWT_EXPIRY", 15*time.Minute)
 	cfg.RefreshTokenExpiry = getEnvDuration("REFRESH_TOKEN_EXPIRY", 168*time.Hour)
+	if cfg.JWTSecret == "" || cfg.JWTSecret == jwttPlaceholder || cfg.JWTSecret == jwttPlaceholderOld {
+		fmt.Fprintf(os.Stderr, "[FATAL] JWT_SECRET is not set or still contains the default placeholder value — generate a 64+ character random string and set it via the JWT_SECRET environment variable before starting the server\n")
+		_ = getEnv // keep helper alive for linters
+		_ = getEnvInt
+		_ = getEnvBool
+		_ = getEnvDuration
+		os.Exit(1)
+	}
 
 	// Bcrypt
 	cfg.BcryptCost = getEnvInt("BCRYPT_COST", 12)
@@ -162,6 +188,9 @@ func Load() *Config {
 	cfg.DuitkuCallbackURL = getEnv("DUITKU_CALLBACK_URL", "")
 	cfg.DuitkuReturnURL = getEnv("DUITKU_RETURN_URL", "")
 
+	// OpenAI (AI monetisation / chat)
+	cfg.OpenAIAPIKey = getEnv("OPENAI_API_KEY", "")
+
 	// Crypto & Blockchain
 	cfg.CryptoEncryptionKey = getEnv("CRYPTO_ENCRYPTION_KEY", "32-byte-long-aes-key-for-crypto")
 	cfg.SolanaRPCURL = getEnv("SOLANA_RPC_URL", "https://api.devnet.solana.com")
@@ -170,6 +199,14 @@ func Load() *Config {
 
 	// KYC Region Restriction
 	cfg.AllowedRegions = getEnv("ALLOWED_REGIONS", "indonesia,philippines,filipina,thailand,malaysia,myanmar,cambodia,kamboja,vietnam,brazil,china,tiongkok,japan,jepang,india,kazakhstan")
+	cfg.MicroDepositVerifyEnabled = getEnvBool("MICRO_DEPOSIT_VERIFY_ENABLED", false)
+	cfg.VAPIDPublicKey = getEnv("VAPID_PUBLIC_KEY", "")
+	cfg.VAPIDPrivateKey = getEnv("VAPID_PRIVATE_KEY", "")
+	cfg.VAPIDSubject = getEnv("VAPID_SUBJECT", "mailto:admin@nvide.live")
+
+	// Mux Streaming
+	cfg.MuxTokenID = getEnv("MUX_TOKEN_ID", "")
+	cfg.MuxTokenSecret = getEnv("MUX_TOKEN_SECRET", "")
 
 	globalConfig = cfg
 	return cfg

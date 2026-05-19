@@ -30,6 +30,9 @@ func SetupRouter(
 	clipHandler *ClipHandler,
 	kycHandler *KYCHandler,
 	clipSubHandler *ClipSubscriptionHandler,
+	dashboardHandler *DashboardHandler,
+	payoutHandler *PayoutHandler,
+	pushHandler *PushHandler,
 	authMiddleware *middleware.AuthMiddleware,
 	rbacMiddleware *middleware.RBACMiddleware,
 	rateLimitMiddleware *middleware.RateLimitMiddleware,
@@ -41,10 +44,10 @@ func SetupRouter(
 	router := mux.NewRouter()
 
 	// Apply global middleware
-	router.Use(middleware.RequestID)                 // Generate and inject UUID v7 X-Request-ID
+	router.Use(middleware.RequestID)                // Generate and inject UUID v7 X-Request-ID
 	router.Use(middleware.LoggerMiddleware(logger)) // Log HTTP requests with correlation tracing
 	router.Use(middleware.RecoveryMiddleware(logger))
-	router.Use(middleware.MetricsMiddleware) // Apply Prometheus Metrics Middleware!
+	router.Use(middleware.MetricsMiddleware)              // Apply Prometheus Metrics Middleware!
 	router.Use(middleware.NewI18nMiddleware().Middleware) // Apply Multi-Language i18n Middleware!
 	if idempotencyMiddleware != nil {
 		router.Use(idempotencyMiddleware.Middleware())
@@ -79,11 +82,11 @@ func SetupRouter(
 		kycRouter := protected.PathPrefix("/kyc").Subrouter()
 		kycRouter.Use(middleware.RegionValidator)
 		kycRouter.HandleFunc("/submit", kycHandler.SubmitKYC).Methods("POST")
-		
+
 		// Other KYC routes
 		protected.HandleFunc("/kyc/status", kycHandler.GetStatus).Methods("GET")
 		protected.HandleFunc("/kyc/agency/submit", kycHandler.SubmitAgency).Methods("POST")
-		
+
 		// Onboarding Checklist routes
 		protected.HandleFunc("/onboarding/user", kycHandler.GetOnboardingChecklist).Methods("GET")
 		protected.HandleFunc("/onboarding/host", kycHandler.GetOnboardingChecklist).Methods("GET")
@@ -102,6 +105,58 @@ func SetupRouter(
 		protected.HandleFunc("/clip-subscriptions/subscribe", clipSubHandler.Subscribe).Methods("POST")
 		protected.HandleFunc("/clip-subscriptions/status", clipSubHandler.GetStatus).Methods("GET")
 		protected.HandleFunc("/clip-subscriptions/history", clipSubHandler.GetHistory).Methods("GET")
+	}
+
+	// ===== DASHBOARD ROUTES =====
+	if dashboardHandler != nil {
+		// Admin Dashboard
+		protected.HandleFunc("/admin/dashboard/stats", dashboardHandler.GetAdminStats).Methods("GET")
+		protected.HandleFunc("/admin/dashboard/revenue", dashboardHandler.GetAdminRevenue).Methods("GET")
+		protected.HandleFunc("/admin/dashboard/graph", dashboardHandler.GetAdminGraph).Methods("GET")
+		protected.HandleFunc("/admin/users", dashboardHandler.ListUsers).Methods("GET")
+		protected.HandleFunc("/admin/kyc/pending", dashboardHandler.ListPendingKYC).Methods("GET")
+		protected.HandleFunc("/admin/reports", dashboardHandler.ListReports).Methods("GET")
+		protected.HandleFunc("/admin/users/{id}/ban", dashboardHandler.BanUser).Methods("PUT")
+		protected.HandleFunc("/admin/users/{id}/unban", dashboardHandler.UnbanUser).Methods("PUT")
+		protected.HandleFunc("/admin/streams/{id}/terminate", dashboardHandler.TerminateStream).Methods("PUT")
+		protected.HandleFunc("/admin/comments/{id}", dashboardHandler.DeleteComment).Methods("DELETE")
+		protected.HandleFunc("/reports", dashboardHandler.SubmitReport).Methods("POST")
+
+		// Host Dashboard
+		protected.HandleFunc("/host/dashboard/stats", dashboardHandler.GetHostStats).Methods("GET")
+		protected.HandleFunc("/host/dashboard/revenue", dashboardHandler.GetHostRevenue).Methods("GET")
+		protected.HandleFunc("/host/dashboard/clips", dashboardHandler.GetHostClips).Methods("GET")
+		protected.HandleFunc("/host/dashboard/streams", dashboardHandler.GetHostStreams).Methods("GET")
+		protected.HandleFunc("/host/dashboard/requests", dashboardHandler.GetHostRequests).Methods("GET")
+		protected.HandleFunc("/host/dashboard/settings", dashboardHandler.UpdateHostSettings).Methods("PUT")
+
+		// Agency Dashboard
+		protected.HandleFunc("/agency/dashboard/stats", dashboardHandler.GetAgencyStats).Methods("GET")
+		protected.HandleFunc("/agency/dashboard/hosts", dashboardHandler.GetAgencyHosts).Methods("GET")
+		protected.HandleFunc("/agency/dashboard/hosts/invite", dashboardHandler.InviteHost).Methods("POST")
+		protected.HandleFunc("/agency/dashboard/hosts/{id}", dashboardHandler.RemoveHost).Methods("DELETE")
+		protected.HandleFunc("/agency/dashboard/revenue", dashboardHandler.GetAgencyRevenue).Methods("GET")
+		protected.HandleFunc("/agency/dashboard/settings", dashboardHandler.UpdateAgencySettings).Methods("PUT")
+	}
+
+	// ===== PAYOUT METHODS ROUTES =====
+	if payoutHandler != nil {
+		protected.HandleFunc("/payout-methods", payoutHandler.ListPayoutMethods).Methods("GET")
+		protected.HandleFunc("/payout-methods", payoutHandler.CreatePayoutMethod).Methods("POST")
+		protected.HandleFunc("/payout-methods/{id}", payoutHandler.UpdatePayoutMethod).Methods("PUT")
+		protected.HandleFunc("/payout-methods/{id}", payoutHandler.DeletePayoutMethod).Methods("DELETE")
+		protected.HandleFunc("/payout-methods/{id}/primary", payoutHandler.SetPrimaryPayoutMethod).Methods("PUT")
+
+		protected.HandleFunc("/crypto-payout-addresses", payoutHandler.ListCryptoPayoutAddresses).Methods("GET")
+		protected.HandleFunc("/crypto-payout-addresses", payoutHandler.CreateCryptoPayoutAddress).Methods("POST")
+		protected.HandleFunc("/crypto-payout-addresses/{id}", payoutHandler.DeleteCryptoPayoutAddress).Methods("DELETE")
+	}
+
+	// ===== PUSH NOTIFICATION ROUTES =====
+	if pushHandler != nil {
+		protected.HandleFunc("/push/subscribe", pushHandler.Subscribe).Methods("POST")
+		protected.HandleFunc("/push/unsubscribe", pushHandler.Unsubscribe).Methods("POST")
+		protected.HandleFunc("/push/test", pushHandler.SendTest).Methods("POST")
 	}
 
 	// Auth routes
@@ -219,13 +274,13 @@ func SetupRouter(
 	router.HandleFunc("/ws/stream/{room_id}/host", webrtcHandler.ServeHostWS).Methods("GET")
 	router.HandleFunc("/ws/stream/{room_id}/viewer", webrtcHandler.ServeViewerWS).Methods("GET")
 	router.HandleFunc("/api/v1/streams/{stream_id}", webrtcHandler.GetStream).Methods("GET")
-	
+
 	// Stream Management (Protected)
 	protected.HandleFunc("/streams", webrtcHandler.CreateStream).Methods("POST")
 	protected.HandleFunc("/streams/{stream_id}/start", webrtcHandler.StartStream).Methods("POST")
 	protected.HandleFunc("/streams/{stream_id}/end", webrtcHandler.EndStream).Methods("POST", "PUT")
 	protected.HandleFunc("/streams/{stream_id}/mode", webrtcHandler.SwitchRoomMode).Methods("PATCH")
-	
+
 	// Public Stream Routes
 	apiV1.HandleFunc("/streams", webrtcHandler.GetLiveStreams).Methods("GET")
 	apiV1.HandleFunc("/streams/live", webrtcHandler.GetLiveStreams).Methods("GET")

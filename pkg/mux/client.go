@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
+	"time"
+
+	"nvide-live/pkg/config"
 )
 
 type Client struct {
@@ -16,10 +18,22 @@ type Client struct {
 }
 
 func NewClient() *Client {
+	cfg := config.Get()
 	return &Client{
-		tokenID:     os.Getenv("MUX_TOKEN_ID"),
-		tokenSecret: os.Getenv("MUX_TOKEN_SECRET"),
+		tokenID:     cfg.MuxTokenID,
+		tokenSecret: cfg.MuxTokenSecret,
 		baseURL:     "https://api.mux.com/video/v1",
+	}
+}
+
+func NewHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: 15 * time.Second,
+		Transport: &http.Transport{
+			MaxIdleConns:        10,
+			IdleConnTimeout:     30 * time.Second,
+			TLSHandshakeTimeout: 10 * time.Second,
+		},
 	}
 }
 
@@ -52,7 +66,8 @@ func (c *Client) CreateLiveStream() (*LiveStreamResponse, error) {
 	req.SetBasicAuth(c.tokenID, c.tokenSecret)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	httpClient := NewHTTPClient()
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

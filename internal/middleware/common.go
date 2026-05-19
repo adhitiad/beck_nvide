@@ -10,6 +10,48 @@ type loggingContextKey string
 
 const CorrelationIDKey loggingContextKey = "correlation_id"
 
+// RedactURL strips credentials from a database URL for safe logging.
+func RedactURL(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	// Very small parser: look for user:pass@host and zero the credentials.
+	// Handles postgres://user:pass@host:5432/dbname
+	prefixEnd := 0
+	for i, c := range raw {
+		if c == ':' {
+			prefixEnd = i
+			break
+		}
+	}
+	if prefixEnd == 0 {
+		return raw
+	}
+	scheme := raw[:prefixEnd] // "postgres"
+	rest := raw[prefixEnd:]   // "://user:pass@host:5432/dbname"
+	for i, c := range rest {
+		if c == '/' && i+2 < len(rest) && rest[i+1] == '/' {
+			credStart := i + 2
+			atIdx := -1
+			for j := credStart; j < len(rest); j++ {
+				if rest[j] == '@' {
+					atIdx = j
+					break
+				}
+			}
+			if atIdx > credStart {
+				redacted := make([]byte, len(rest))
+				copy(redacted, rest[:credStart])
+				for k := credStart; k < atIdx; k++ {
+					redacted[k] = '*'
+				}
+				copy(redacted[atIdx:], rest[atIdx:])
+				return scheme + string(redacted)
+			}
+		}
+	}
+	return raw
+}
 
 // CORSMiddleware is a mux-compatible middleware (kept for compatibility)
 func CORSMiddleware() func(http.Handler) http.Handler {
@@ -72,6 +114,60 @@ func RecoveryMiddleware(logger *zap.Logger) func(http.Handler) http.Handler {
 
 
 
+// Envelope is the standard JSON response shape for all API responses (success and error).
+type Envelope struct {
+	Success bool        `json:"success"`
+	Data    interface{} `json:"data,omitempty"`
+	Error   *APIError   `json:"error,omitempty"`
+}
+
+// APIError is the structured error shape.
+type APIError struct {
+	Code    string `json:"error_code"`
+	Message string `json:"message"`
+}
+
+// WriteJSON writes a standardised JSON envelope response.
+func WriteJSON(w http.ResponseWriter, status int, data interface{}) {
+	if w.Header().Get("Content-Type") == "" {
+		w.Header().Set("Content-Type", "application/json")
+	}
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(Envelope{
+		Success: status >= 200 && status < 300,
+		Data:    data,
+	})
+}
+
+// WriteJSONError writes a standardised JSON error envelope response.
+func WriteJSONError(w http.ResponseWriter, status int, code, message string) {
+	if w.Header().Get("Content-Type") == "" {
+		w.Header().Set("Content-Type", "application/json")
+	}
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(Envelope{
+		Success: false,
+		Error: &APIError{
+			Code:    code,
+			Message: message,
+		},
+	})
+}
+
+// MaxRequestBodyBytes is the global default for request body size limiting (10 MB).
+const MaxRequestBodyBytes = 10 << 20 // = 10 MiB
+
+// BodyLimitMiddleware wraps r.Body with http.MaxBytesReader to prevent large payload attacks.
+func BodyLimitMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, MaxRequestBodyBytes)
+		next.ServeHTTP(w, r)
+	})
+}
+
+// writeJSONErrorResponse writes a simple flat error JSON (used internally by middleware, kept for compat)
 func writeJSONErrorResponse(w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)

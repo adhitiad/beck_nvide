@@ -7,13 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
 	"go.uber.org/zap"
 
 	"nvide-live/internal/domain"
+	"nvide-live/pkg/config"
 )
 
 type monetizationUseCase struct {
@@ -517,7 +517,7 @@ func (uc *monetizationUseCase) SendAIChatMessage(ctx context.Context, userID, ho
 
 	// 7. Generate bot response (Premium AI GPT API call with robust fallback simulator)
 	var aiResponse string
-	apiKey := os.Getenv("OPENAI_API_KEY")
+	apiKey := config.Get().OpenAIAPIKey
 	if apiKey != "" {
 		aiResponse = uc.generateOpenAIResponse(ctx, apiKey, content, styleContext)
 	} else {

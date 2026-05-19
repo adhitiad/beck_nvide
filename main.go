@@ -30,12 +30,12 @@ import (
 	"nvide-live/pkg/duitku"
 	"nvide-live/pkg/ffmpeg"
 	"nvide-live/pkg/i18n"
+	pkgLogger "nvide-live/pkg/logger"
 	"nvide-live/pkg/rbac"
 	"nvide-live/pkg/redis"
 	"nvide-live/pkg/storage"
 	"nvide-live/pkg/wallet"
 	"nvide-live/pkg/worker"
-	pkgLogger "nvide-live/pkg/logger"
 )
 
 func main() {
@@ -95,7 +95,6 @@ func main() {
 	}
 	// Bypass auto-migration since tables already exist and remote GORM checks can hang
 	logger.Info("Database auto-migration skipped (tables already migrated)")
-
 
 	// Initialize Redis
 	redisClient, err := redis.New(&redis.Config{
@@ -171,6 +170,10 @@ func main() {
 	bannedRepo := repository.NewBannedUserRepository(db.Pool(), logger)
 	onboardRepo := repository.NewOnboardingRepository(db.Pool(), logger)
 	clipSubRepo := repository.NewClipSubscriptionRepository(db.Pool(), logger)
+	dashboardRepo := repository.NewDashboardRepository(db.Pool(), logger)
+	payoutMethodRepo := repository.NewPayoutMethodRepository(db.Pool(), logger)
+	cryptoPayoutAddressRepo := repository.NewCryptoPayoutAddressRepository(db.Pool(), logger)
+	pushSubscriptionRepo := repository.NewPushSubscriptionRepository(db.Pool(), logger)
 
 	// Initialize Storage and FFmpeg
 	localStorage := storage.NewLocalStorage("./uploads", "/uploads", logger)
@@ -260,9 +263,23 @@ func main() {
 	giftUseCase := usecase.NewGiftUseCase(giftRepo, giftTxRepo, agencyRepo, walletUseCase, privateChatUseCase, messageRepo, chatRoomRepo, wsHub, redisClient, logger)
 	agencyUseCase := usecase.NewAgencyUseCase(hostAppRepo, agencyRepo, walletUseCase, logger)
 	paymentUseCase := usecase.NewPaymentUseCase(txRepo, duitkuPaymentRepo, walletUseCase, duitkuClient, redisClient, logger)
-	cryptoUseCase := usecase.NewCryptoUseCase(cryptoRepo, walletUseCase, redisClient, logger, []byte(cfg.CryptoEncryptionKey))
+	cryptoUseCase := usecase.NewCryptoUseCase(cryptoRepo, walletUseCase, redisClient, logger, []byte(cfg.CryptoEncryptionKey), cfg.CryptoMasterMnemonic)
 	paidInteractionUseCase := usecase.NewPaidInteractionUsecase(paidInteractionRepo, walletRepo, txRepo, userRepo, agencyRepo, redisClient, logger)
-	withdrawalUseCase := usecase.NewWithdrawalUsecase(withdrawalRepo, walletRepo, txRepo, agencyRepo, userRepo, redisClient, logger)
+	payoutUseCase := usecase.NewPayoutUsecase(
+		payoutMethodRepo,
+		cryptoPayoutAddressRepo,
+		[]byte(cfg.CryptoEncryptionKey),
+		cfg.MicroDepositVerifyEnabled,
+		logger,
+	)
+	pushUseCase := usecase.NewPushNotificationUsecase(
+		pushSubscriptionRepo,
+		cfg.VAPIDPublicKey,
+		cfg.VAPIDPrivateKey,
+		cfg.VAPIDSubject,
+		logger,
+	)
+	withdrawalUseCase := usecase.NewWithdrawalUsecase(withdrawalRepo, walletRepo, txRepo, agencyRepo, userRepo, payoutUseCase, redisClient, logger)
 	bookingUseCase := usecase.NewBookingUsecase(bookingRepo, walletRepo, agencyRepo, withdrawalUseCase, redisClient, logger)
 	offerRepo := repository.NewOfferRepository(db.Pool(), logger)
 	offerUseCase := usecase.NewOfferUsecase(offerRepo, bookingRepo, bookingUseCase, walletRepo, agencyRepo, redisClient, logger)
@@ -278,6 +295,16 @@ func main() {
 	kycUseCase := usecase.NewKYCUseCase(kycRepo, userRepo, bannedRepo, streamRepo, onboardRepo, logger)
 	onboardingUseCase := usecase.NewOnboardingUseCase(onboardRepo, userRepo, logger)
 	clipSubUseCase := usecase.NewClipSubscriptionUseCase(clipSubRepo, userRepo, walletUseCase, logger)
+	dashboardUseCase := usecase.NewDashboardUseCase(
+		dashboardRepo,
+		userRepo,
+		bannedRepo,
+		streamRepo,
+		commentRepo,
+		kycRepo,
+		agencyRepo,
+		logger,
+	)
 
 	// Initialize ModerationUseCase & NSFW Scanner (Fitur 6)
 	nsfwScanner := usecase.NewAWSRekognitionScanner(logger)
@@ -368,6 +395,9 @@ func main() {
 	// New KYC and Subscription Handlers
 	kycHandler := delivery.NewKYCHandler(kycUseCase, onboardingUseCase, logger)
 	clipSubHandler := delivery.NewClipSubscriptionHandler(clipSubUseCase, logger)
+	dashboardHandler := delivery.NewDashboardHandler(dashboardUseCase, logger)
+	payoutHandler := delivery.NewPayoutHandler(payoutUseCase, logger)
+	pushHandler := delivery.NewPushHandler(pushUseCase, logger)
 
 	// Initialize middleware
 	authMiddleware := middleware.NewAuthMiddleware(authService, redisClient, logger)
@@ -405,6 +435,9 @@ func main() {
 		clipHandler,
 		kycHandler,
 		clipSubHandler,
+		dashboardHandler,
+		payoutHandler,
+		pushHandler,
 		authMiddleware,
 		rbacMiddleware,
 		rateLimitMiddleware,

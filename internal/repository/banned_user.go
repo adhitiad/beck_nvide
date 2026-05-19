@@ -3,7 +3,9 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"errors"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
 
@@ -96,7 +98,7 @@ func (r *bannedUserRepository) IsBanned(ctx context.Context, userID domain.UUID)
 	)
 
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
 			return false, nil, nil
 		}
 		r.logger.Error("Failed to check if user is banned", zap.Error(err), zap.String("user_id", userID.String()))
@@ -134,7 +136,7 @@ func (r *bannedUserRepository) IsDeviceBanned(ctx context.Context, fingerprint s
 	)
 
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
 			return false, nil, nil
 		}
 		r.logger.Error("Failed to check if device is banned", zap.Error(err), zap.String("fingerprint", fingerprint))
@@ -172,7 +174,7 @@ func (r *bannedUserRepository) IsIPBanned(ctx context.Context, ip string) (bool,
 	)
 
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) || errors.Is(err, pgx.ErrNoRows) {
 			return false, nil, nil
 		}
 		r.logger.Error("Failed to check if IP is banned", zap.Error(err), zap.String("ip", ip))

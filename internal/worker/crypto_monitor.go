@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"nvide-live/internal/domain"
@@ -18,6 +19,7 @@ type CryptoMonitor struct {
 	evm        *blockchain.EVMClient
 	logger     *zap.Logger
 	stopChan   chan struct{}
+	stopOnce   sync.Once
 }
 
 func NewCryptoMonitor(
@@ -37,7 +39,7 @@ func NewCryptoMonitor(
 	}
 }
 
-func (m *CryptoMonitor) Start() {
+func (m *CryptoMonitor) Start(ctx context.Context) {
 	m.logger.Info("Starting Crypto Monitor Service")
 
 	pollingTicker := time.NewTicker(1 * time.Minute)
@@ -47,10 +49,14 @@ func (m *CryptoMonitor) Start() {
 		for {
 			select {
 			case <-pollingTicker.C:
-				m.pollNewDeposits()
+				m.pollNewDeposits(ctx)
 			case <-confirmationTicker.C:
-				m.trackConfirmations()
+				m.trackConfirmations(ctx)
 			case <-m.stopChan:
+				pollingTicker.Stop()
+				confirmationTicker.Stop()
+				return
+			case <-ctx.Done():
 				pollingTicker.Stop()
 				confirmationTicker.Stop()
 				return
@@ -60,11 +66,13 @@ func (m *CryptoMonitor) Start() {
 }
 
 func (m *CryptoMonitor) Stop() {
-	m.logger.Info("Stopping Crypto Monitor Service")
-	close(m.stopChan)
+	m.stopOnce.Do(func() {
+		m.logger.Info("Stopping Crypto Monitor Service")
+		close(m.stopChan)
+	})
 }
 
-func (m *CryptoMonitor) pollNewDeposits() {
+func (m *CryptoMonitor) pollNewDeposits(ctx context.Context) {
 	m.logger.Debug("Polling blockchain for new deposits")
 
 	// 1. Get all active deposit addresses from DB
@@ -74,10 +82,8 @@ func (m *CryptoMonitor) pollNewDeposits() {
 	// Implementation would iterate through addresses and check signatures
 }
 
-func (m *CryptoMonitor) trackConfirmations() {
+func (m *CryptoMonitor) trackConfirmations(ctx context.Context) {
 	m.logger.Debug("Tracking transaction confirmations")
-	ctx := context.Background()
-	_ = ctx
 	txs, err := m.cryptoRepo.ListPendingTransactions(ctx)
 	if err != nil {
 		m.logger.Error("Failed to list pending transactions", zap.Error(err))
