@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -130,14 +129,9 @@ func contextWithValue(ctx context.Context, key contextKey, value interface{}) co
 	return context.WithValue(ctx, key, value)
 }
 
-// writeJSONError writes error response as JSON
+// Helper: writeJSONError delegates to the shared middleware envelope writer.
 func writeJSONError(w http.ResponseWriter, status int, code, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]string{
-		"error":   code,
-		"message": message,
-	})
+	WriteJSONError(w, status, code, message)
 }
 
 // GetUserIDFromContext retrieves user ID from context

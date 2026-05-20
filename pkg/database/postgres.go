@@ -35,8 +35,8 @@ func New(cfg *Config, logger *zap.Logger) (*DB, error) {
 	connStr := cfg.DATABASE_URL
 	if connStr == "" {
 		connStr = fmt.Sprintf(
-			"postgres://%s:%s@%s:%s/%s?sslmode=%s",
-			cfg.User, cfg.Password, cfg.Host, cfg.Port, cfg.DBName, cfg.SSLMode,
+			"postgres://%s:%s@%s:%s/%s",
+			cfg.User, cfg.Password, cfg.Host, cfg.Port, cfg.DBName,
 		)
 	}
 

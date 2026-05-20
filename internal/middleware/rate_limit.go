@@ -32,10 +32,24 @@ func NewRateLimitMiddleware(redisClient *redis.Client, logger *zap.Logger, enabl
 	}
 }
 
+// isExemptedPath returns true if the path should skip rate limiting.
+func isExemptedPath(path string) bool {
+	switch path {
+	case "/health", "/ready", "/metrics":
+		return true
+	}
+	return false
+}
+
 // Middleware implements rate limiting using token bucket
 func (m *RateLimitMiddleware) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !m.enabled {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		if isExemptedPath(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -52,7 +66,7 @@ func (m *RateLimitMiddleware) Middleware(next http.Handler) http.Handler {
 
 		if !allowed {
 			w.Header().Set("Retry-After", "1") // generic retry after 1s for token bucket
-			writeJSONErrorResponse(w, http.StatusTooManyRequests, "RATE_LIMIT_EXCEEDED", "Too many requests")
+			WriteJSONError(w, http.StatusTooManyRequests, "RATE_LIMIT_EXCEEDED", "Too many requests")
 			return
 		}
 

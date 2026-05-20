@@ -24,11 +24,28 @@ type Config struct {
 
 // New creates a new Redis client
 func New(cfg *Config, logger *zap.Logger) (*Client, error) {
-	opt := &redis.Options{
-		Addr:     cfg.Addr,
-		Password: cfg.Password,
-		DB:       cfg.DB,
-		PoolSize: cfg.PoolSize,
+	var opt *redis.Options
+	var err error
+
+	if len(cfg.Addr) >= 8 && (cfg.Addr[:8] == "redis://" || (len(cfg.Addr) >= 9 && cfg.Addr[:9] == "rediss://")) {
+		opt, err = redis.ParseURL(cfg.Addr)
+		if err != nil {
+			return nil, err
+		}
+		if opt.Password == "" && cfg.Password != "" {
+			opt.Password = cfg.Password
+		}
+	} else {
+		opt = &redis.Options{
+			Addr:     cfg.Addr,
+			Password: cfg.Password,
+			DB:       cfg.DB,
+			PoolSize: cfg.PoolSize,
+		}
+	}
+
+	if cfg.PoolSize > 0 {
+		opt.PoolSize = cfg.PoolSize
 	}
 
 	rdb := redis.NewClient(opt)

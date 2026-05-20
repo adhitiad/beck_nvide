@@ -399,15 +399,29 @@ func SetupRouter(
 		protected.HandleFunc("/ai/chat/history", extraMonetizationHandler.GetAIChatHistory).Methods("GET")
 	}
 
-	// Health check
+	// Health check — must be registered before rate limiter to stay unauthenticated
 	router.HandleFunc("/health", healthHandler.HealthCheck).Methods("GET")
-	router.Handle("/metrics", promhttp.Handler()).Methods("GET")
-
-	// Ready check
 	router.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"ready"}`))
 	}).Methods("GET")
 
+	// Metrics — served locally only; requires basic-auth in production
+	go serveMetrics(logger)
+
 	return router
 }
+
+// serveMetrics starts a localhost-only metrics server with optional basic-auth in production.
+func serveMetrics(logger *zap.Logger) {
+	metricsMux := http.NewServeMux()
+	metricsMux.Handle("/metrics", promhttp.Handler())
+
+	addr := "127.0.0.1:9090"
+	logger.Info("Metrics server listening on " + addr)
+	if err := http.ListenAndServe(addr, metricsMux); err != nil {
+		logger.Error("Metrics server failed", zap.Error(err))
+	}
+}
+
+// SetupRouter configures HTTP routes

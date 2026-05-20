@@ -16,11 +16,12 @@ type JobType string
 
 const (
 	// New job types requested by user
-	JobVideoTranscode   JobType = "video_transcode"
-	JobImageScan        JobType = "image_scan"
-	JobEmailSend        JobType = "email_send"
+	JobVideoTranscode     JobType = "video_transcode"
+	JobImageScan          JobType = "image_scan"
+	JobEmailSend          JobType = "email_send"
 	JobNotificationPush JobType = "notification_push"
-	JobMediaDelete      JobType = "media_delete"
+	JobMediaDelete        JobType = "media_delete"
+	JobStorageReplication JobType = "storage_replication"
 
 	// Existing job types for backward compatibility
 	JobVideoTranscoding  JobType = "video_transcoding"

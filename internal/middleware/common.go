@@ -10,12 +10,11 @@ type loggingContextKey string
 
 const CorrelationIDKey loggingContextKey = "correlation_id"
 
-// RedactURL strips credentials from a database URL for safe logging.
+// RedactURL strips credentials from a database URL for safe log output.
 func RedactURL(raw string) string {
 	if raw == "" {
 		return ""
 	}
-	// Very small parser: look for user:pass@host and zero the credentials.
 	// Handles postgres://user:pass@host:5432/dbname
 	prefixEnd := 0
 	for i, c := range raw {
@@ -27,8 +26,8 @@ func RedactURL(raw string) string {
 	if prefixEnd == 0 {
 		return raw
 	}
-	scheme := raw[:prefixEnd] // "postgres"
-	rest := raw[prefixEnd:]   // "://user:pass@host:5432/dbname"
+	scheme := raw[:prefixEnd]
+	rest := raw[prefixEnd:]
 	for i, c := range rest {
 		if c == '/' && i+2 < len(rest) && rest[i+1] == '/' {
 			credStart := i + 2
@@ -58,28 +57,23 @@ func CORSMiddleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			SetCORSHeaders(w)
-
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
 				return
 			}
-
 			next.ServeHTTP(w, r)
 		})
 	}
 }
 
 // CORSWrapper wraps an http.Handler to provide global CORS support.
-// Use this instead of CORSMiddleware for the main server handler.
 func CORSWrapper(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		SetCORSHeaders(w)
-
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-
 		h.ServeHTTP(w, r)
 	})
 }
@@ -90,7 +84,6 @@ func SetCORSHeaders(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-Correlation-ID")
 }
-
 
 // RecoveryMiddleware recovers from panics
 func RecoveryMiddleware(logger *zap.Logger) func(http.Handler) http.Handler {
@@ -104,7 +97,7 @@ func RecoveryMiddleware(logger *zap.Logger) func(http.Handler) http.Handler {
 						zap.Any("error", err),
 						zap.String("path", r.URL.Path),
 					)
-					writeJSONErrorResponse(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Internal server error")
+					WriteJSONError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Internal server error")
 				}
 			}()
 			next.ServeHTTP(w, r)
@@ -112,16 +105,18 @@ func RecoveryMiddleware(logger *zap.Logger) func(http.Handler) http.Handler {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Standardised JSON response envelope
+// ---------------------------------------------------------------------------
 
-
-// Envelope is the standard JSON response shape for all API responses (success and error).
+// Envelope is the standard JSON response shape used by every API handler.
 type Envelope struct {
 	Success bool        `json:"success"`
 	Data    interface{} `json:"data,omitempty"`
 	Error   *APIError   `json:"error,omitempty"`
 }
 
-// APIError is the structured error shape.
+// APIError is the structured error shape inside the envelope.
 type APIError struct {
 	Code    string `json:"error_code"`
 	Message string `json:"message"`
@@ -157,22 +152,12 @@ func WriteJSONError(w http.ResponseWriter, status int, code, message string) {
 }
 
 // MaxRequestBodyBytes is the global default for request body size limiting (10 MB).
-const MaxRequestBodyBytes = 10 << 20 // = 10 MiB
+const MaxRequestBodyBytes = 10 << 20
 
 // BodyLimitMiddleware wraps r.Body with http.MaxBytesReader to prevent large payload attacks.
 func BodyLimitMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, MaxRequestBodyBytes)
 		next.ServeHTTP(w, r)
-	})
-}
-
-// writeJSONErrorResponse writes a simple flat error JSON (used internally by middleware, kept for compat)
-func writeJSONErrorResponse(w http.ResponseWriter, status int, code, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]string{
-		"error_code": code,
-		"message":    message,
 	})
 }

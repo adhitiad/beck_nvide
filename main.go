@@ -90,8 +90,8 @@ func main() {
 	// Auto-migrate database tables
 	connStr := cfg.DATABASE_URL
 	if connStr == "" {
-		connStr = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=%s",
-			cfg.DBUser, cfg.DBPassword, cfg.DBHost, cfg.DBPort, cfg.DBName, cfg.DBSSLMode)
+		connStr = fmt.Sprintf("postgres://%s:%s@%s:%s/%s",
+			cfg.DBUser, cfg.DBPassword, cfg.DBHost, cfg.DBPort, cfg.DBName)
 	}
 	// Bypass auto-migration since tables already exist and remote GORM checks can hang
 	logger.Info("Database auto-migration skipped (tables already migrated)")
@@ -344,7 +344,7 @@ func main() {
 	}()
 
 	cryptoMonitor := workerV1.NewCryptoMonitor(cryptoRepo, cryptoUseCase, solanaClient, evmClient, logger)
-	go cryptoMonitor.Start()
+	go cryptoMonitor.Start(context.Background())
 	defer cryptoMonitor.Stop()
 
 	// Periodic Disappearing Messages Processor (Fitur 8)
