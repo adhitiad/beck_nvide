@@ -1,0 +1,19 @@
+<USER_REQUEST>
+
+ GET /api/auth/get-session 200 in 11ms (next.js: 3ms, application-code: 8ms)
+ GET /dashboard 200 in 90ms (next.js: 5ms, proxy.ts: 19ms, application-code: 66ms)
+[browser] No refresh token found, logging out... (src/lib/api.ts:37:19)
+[browser] Refresh token failed: Error: No refresh token
+    at <unknown> (src/lib/api.ts:38:17)
+    at async DashboardPage.useEffect.fetchProfile (file://E:/nvide/front_nvide/.next/dev/static/chunks/src_0nazupc._.js:497:38)
+  36 |         if (!refreshToken) {
+  37 |           console.warn("No refresh token found, logging out...");
+> 38 |           throw new Error("No refresh token");
+     |                 ^
+  39 |         }
+  40 |
+  41 |         console.log("Token expired, attempting refresh..."); (src/lib/api.ts:67:17)
+[browser] Gagal memuat profil Error: No refresh token
+    at <unknown> (src/lib/api.ts:38:17)
+    at async DashboardPage.useEffect.fetchProfile (file://E:/nvide/front_nvide/.next/dev/static/chunks/src_0nazupc._.js:497:38)
+<truncated 2750 bytes>

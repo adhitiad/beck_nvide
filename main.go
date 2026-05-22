@@ -14,27 +14,15 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"nvide-live/internal/delivery"
+	"nvide-live/cmd/server"
 	"nvide-live/internal/domain"
-	"nvide-live/internal/middleware"
-	"nvide-live/internal/repository"
 	"nvide-live/internal/usecase"
-	"nvide-live/internal/webrtc"
-	"nvide-live/internal/websocket"
+	"nvide-live/internal/middleware"
 	workerV1 "nvide-live/internal/worker"
-	"nvide-live/pkg/auth"
-	"nvide-live/pkg/blockchain"
-	"nvide-live/pkg/broker"
 	"nvide-live/pkg/config"
-	"nvide-live/pkg/database"
-	"nvide-live/pkg/duitku"
-	"nvide-live/pkg/ffmpeg"
 	"nvide-live/pkg/i18n"
 	pkgLogger "nvide-live/pkg/logger"
 	"nvide-live/pkg/rbac"
-	"nvide-live/pkg/redis"
-	"nvide-live/pkg/storage"
-	"nvide-live/pkg/wallet"
 	"nvide-live/pkg/worker"
 )
 
@@ -70,184 +58,60 @@ func main() {
 		zap.String("env", "production"),
 	)
 
-	// Initialize database
-	db, err := database.New(&database.Config{
-		DATABASE_URL: cfg.DATABASE_URL,
-		Host:         cfg.DBHost,
-		Port:         cfg.DBPort,
-		User:         cfg.DBUser,
-		Password:     cfg.DBPassword,
-		DBName:       cfg.DBName,
-		SSLMode:      cfg.DBSSLMode,
-		MaxConn:      cfg.DBMaxConn,
-		MinConn:      cfg.DBMinConn,
-	}, logger)
+	// Initialize App using Wire
+	app, err := server.InitializeApp(logger)
 	if err != nil {
-		logger.Fatal("Failed to connect to database", zap.Error(err))
+		logger.Fatal("Failed to initialize application components", zap.Error(err))
 	}
-	defer db.Close()
+	defer app.DB.Close()
+	defer app.Redis.Close()
 
-	// Auto-migrate database tables
-	connStr := cfg.DATABASE_URL
-	if connStr == "" {
-		connStr = fmt.Sprintf("postgres://%s:%s@%s:%s/%s",
-			cfg.DBUser, cfg.DBPassword, cfg.DBHost, cfg.DBPort, cfg.DBName)
-	}
-	// Bypass auto-migration since tables already exist and remote GORM checks can hang
+	// Bypass auto-migration since tables already exist
 	logger.Info("Database auto-migration skipped (tables already migrated)")
 
-	// Initialize Redis
-	redisClient, err := redis.New(&redis.Config{
-		Addr:     cfg.RedisAddr,
-		Password: cfg.RedisPassword,
-		DB:       cfg.RedisDB,
-		PoolSize: cfg.RedisPoolSize,
-	}, logger)
-	if err != nil {
-		logger.Fatal("Failed to connect to Redis", zap.Error(err))
-	}
-	defer redisClient.Close()
-
-	// Initialize repositories
-	userRepo := repository.NewUserRepository(db.Pool(), logger)
-	tokenRepo := repository.NewTokenRepository(db.Pool(), logger)
-	roleRepo := repository.NewRoleRepository(db.Pool(), logger)
-
-	// Initialize auth service
-	authService := auth.New(cfg.JWTSecret, cfg.JWTExpiry, cfg.RefreshTokenExpiry)
-
-	// Initialize RBAC manager and load permissions
-	rbacManager := rbac.New()
-	loadRBACPermissions(context.Background(), rbacManager, roleRepo, logger)
-
-	// Initialize usecases
-	authUseCase := usecase.NewAuthUseCase(
-		userRepo,
-		tokenRepo,
-		roleRepo,
-		authService,
-		redisClient,
-		rbacManager,
-		logger,
-		cfg.JWTExpiry,
-		cfg.RefreshTokenExpiry,
-	)
-
-	// Initialize social repositories
-	storyRepo := repository.NewStoryRepository(db.Pool(), logger)
-	storyViewRepo := repository.NewStoryViewRepository(db.Pool(), logger)
-	commentRepo := repository.NewCommentRepository(db.Pool(), logger)
-	commentLikeRepo := repository.NewCommentLikeRepository(db.Pool(), logger)
-	likeRepo := repository.NewLikeRepository(db.Pool(), logger)
-	messageRepo := repository.NewMessageRepository(db.Pool(), logger)
-	chatRoomRepo := repository.NewChatRoomRepository(db.Pool(), logger)
-	streamRepo := repository.NewStreamRepository(db.Pool(), logger)
-	streamSessionRepo := repository.NewStreamSessionRepository(db.Pool(), logger)
-	pkRepo := repository.NewPKBattleRepository(db.Pool(), logger)
-	vodRepo := repository.NewVODMediaRepository(db.Pool(), logger)
-	walletRepo := repository.NewWalletRepository(db.Pool(), logger)
-	txRepo := repository.NewTransactionRepository(db.Pool(), logger)
-	agencyRepo := repository.NewAgencyRepository(db.Pool(), logger)
-	hostAppRepo := repository.NewHostApplicationRepository(db.Pool(), logger)
-	giftRepo := repository.NewGiftRepository(db.Pool(), logger)
-	giftTxRepo := repository.NewGiftTransactionRepository(db.Pool(), logger)
-	duitkuPaymentRepo := repository.NewDuitkuPaymentRepository(db.Pool(), logger)
-	cryptoRepo := repository.NewCryptoRepository(db.Pool(), logger)
-	privateChatRepo := repository.NewPrivateChatRepository(db.Pool(), logger)
-	paidInteractionRepo := repository.NewPaidInteractionRepository(db.Pool(), logger)
-	withdrawalRepo := repository.NewWithdrawalRepository(db.Pool(), logger)
-	bookingRepo := repository.NewBookingRepository(db.Pool(), logger)
-	moderationRepo := repository.NewModerationRepository(db.Pool(), logger)
-	monetizationRepo := repository.NewMonetizationRepository(db.Pool(), logger)
-	creatorTokenRepo := repository.NewCreatorTokenRepository(db.Pool(), logger)
-	predictionRepo := repository.NewPredictionRepository(db.Pool(), logger)
-	drmRepo := repository.NewDRMRepository(db.Pool(), logger)
-	recommendationRepo := repository.NewRecommendationRepository(db.Pool(), logger)
-	clipRepo := repository.NewClipRepository(db.Pool(), logger)
-
-	// New KYC and Subscription Repositories
-	kycRepo := repository.NewKYCRepository(db.Pool(), logger)
-	bannedRepo := repository.NewBannedUserRepository(db.Pool(), logger)
-	onboardRepo := repository.NewOnboardingRepository(db.Pool(), logger)
-	clipSubRepo := repository.NewClipSubscriptionRepository(db.Pool(), logger)
-	dashboardRepo := repository.NewDashboardRepository(db.Pool(), logger)
-	payoutMethodRepo := repository.NewPayoutMethodRepository(db.Pool(), logger)
-	cryptoPayoutAddressRepo := repository.NewCryptoPayoutAddressRepository(db.Pool(), logger)
-	pushSubscriptionRepo := repository.NewPushSubscriptionRepository(db.Pool(), logger)
-
-	// Initialize Storage and FFmpeg
-	localStorage := storage.NewLocalStorage("./uploads", "/uploads", logger)
-	ffmpegSvc := ffmpeg.New(logger)
-
-	// Initialize Duitku Client
-	duitkuClient := duitku.NewClient(&duitku.Config{
-		MerchantCode: cfg.DuitkuMerchantCode,
-		APIKey:       cfg.DuitkuAPIKey,
-		BaseURL:      cfg.DuitkuBaseURL,
-		CallbackURL:  cfg.DuitkuCallbackURL,
-		ReturnURL:    cfg.DuitkuReturnURL,
-	}, logger)
-
-	// Initialize Message Broker and WS Hub
-	msgBroker := broker.NewHybridBroker(redisClient, logger)
-	wsHub := websocket.NewHub(db.Pool(), msgBroker, redisClient, logger)
-	go wsHub.Run()
-
-	// Initialize Blockchain Clients
-	solanaClient := blockchain.NewSolanaClient(cfg.SolanaRPCURL)
-	evmClient, _ := blockchain.NewEVMClient(cfg.USDTRPCURL) // BSC Testnet for USDT
-
-	// Initialize new worker pool (Fase 5)
-	workerPool := worker.NewPool(5, logger)
-	workerPool.Start()
-	defer workerPool.Stop()
-
-	// Initialize Leveling XP usecase & Register handler on workerPool (Fase 5)
-	levelingUseCase := usecase.NewLevelingUseCase(db.Pool(), redisClient, wsHub, logger)
-	workerPool.RegisterHandler(worker.JobXPBatchUpdate, func(ctx context.Context, job *worker.Job) error {
-		return levelingUseCase.FlushXPUpdates(ctx)
-	})
-
-	// Periodic XP Batch Update Trigger (Fase 5)
-	go func() {
-		ticker := time.NewTicker(10 * time.Second)
-		defer ticker.Stop()
-		for range ticker.C {
-			workerPool.Enqueue(&worker.Job{
-				ID:        fmt.Sprintf("xp-flush-%d", time.Now().Unix()),
-				Type:      worker.JobXPBatchUpdate,
-				CreatedAt: time.Now(),
-			})
-		}
-	}()
-
 	// Initialize and start old background worker (legacy compatibility)
-	bgWorker := workerV1.NewWorker(db.Pool(), redisClient, logger)
+	bgWorker := workerV1.NewWorker(app.DB.Pool(), app.Redis, logger)
 	bgWorker.Start()
 	defer bgWorker.Stop()
 
-	// Initialize user usecase (Fase 5: Cache & Singleflight enabled)
-	userUseCase := usecase.NewUserUseCase(userRepo, redisClient, logger)
+	// Load RBAC Permissions
+	loadRBACPermissions(context.Background(), app.RBACManager, app.RoleRepo, logger)
 
-	// Initialize social usecases
-	storyUseCase := usecase.NewStoryUseCase(storyRepo, storyViewRepo, userRepo, logger)
-	commentUseCase := usecase.NewCommentUseCase(commentRepo, commentLikeRepo, userRepo, logger)
-	likeUseCase := usecase.NewLikeUseCase(likeRepo, redisClient, msgBroker, logger)
-	messageUseCase := usecase.NewMessageUseCase(messageRepo, chatRoomRepo, userRepo, logger)
-	streamUseCase := usecase.NewStreamUseCase(streamRepo, streamSessionRepo, walletRepo, redisClient, msgBroker, logger)
-	pkUseCase := usecase.NewPKBattleUseCase(pkRepo, streamRepo, wsHub, redisClient, logger)
-	trendingUseCase := usecase.NewTrendingUseCase(db.Pool(), redisClient, streamRepo, logger)
+	// Initialize and start background ModerationWorker
+	moderationWorker := workerV1.NewModerationWorker(app.ModerationUseCase, logger)
+	go moderationWorker.Start(context.Background())
+	defer moderationWorker.Stop()
 
-	// Periodic Trending Score Recalculator (Fase 6)
-	go func() {
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-		for range ticker.C {
-			_ = trendingUseCase.RecalculateTrendingScores(context.Background())
-		}
-	}()
-	vodUseCase := usecase.NewVODUseCase(vodRepo, drmRepo, ffmpegSvc, localStorage, redisClient, workerPool, logger)
-	workerPool.RegisterHandler(worker.JobVideoTranscode, func(ctx context.Context, job *worker.Job) error {
+	// Wait Room & Stream Schedule initialization
+	go app.WaitRoomHub.Run()
+	go app.WSHub.Run()
+
+	app.WorkerPool.Start()
+	defer app.WorkerPool.Stop()
+
+	// Initialize new unified BackgroundJobManager
+	jobManager := workerV1.NewBackgroundJobManager(logger)
+
+	// LevelingUseCase (Job Handlers)
+	app.WorkerPool.RegisterHandler(worker.JobXPBatchUpdate, func(ctx context.Context, job *worker.Job) error {
+		return app.LevelingUseCase.FlushXPUpdates(ctx)
+	})
+
+	// 1. Periodic XP Batch Update Trigger
+	jobManager.Register("xp-flush", 10*time.Second, func(ctx context.Context) {
+		app.WorkerPool.Enqueue(&worker.Job{
+			ID:        fmt.Sprintf("xp-flush-%d", time.Now().Unix()),
+			Type:      worker.JobXPBatchUpdate,
+			CreatedAt: time.Now(),
+		})
+	})
+
+	// 2. Periodic Trending Score Recalculator
+	jobManager.Register("trending-recalc", 30*time.Second, func(ctx context.Context) {
+		_ = app.TrendingUseCase.RecalculateTrendingScores(ctx)
+	})
+
+	app.WorkerPool.RegisterHandler(worker.JobVideoTranscode, func(ctx context.Context, job *worker.Job) error {
 		var payload usecase.VODTranscodePayload
 		if err := json.Unmarshal(job.Payload, &payload); err != nil {
 			return err
@@ -256,201 +120,48 @@ func main() {
 		if err != nil {
 			return err
 		}
-		return vodUseCase.ProcessVideo(ctx, vodID, payload.TempFilePath, payload.OriginalFileName)
+		return app.VODUseCase.ProcessVideo(ctx, vodID, payload.TempFilePath, payload.OriginalFileName)
 	})
-	walletUseCase := usecase.NewWalletUseCase(walletRepo, txRepo, redisClient, logger)
-	privateChatUseCase := usecase.NewPrivateChatUsecase(privateChatRepo, userRepo, redisClient, logger)
-	giftUseCase := usecase.NewGiftUseCase(giftRepo, giftTxRepo, agencyRepo, walletUseCase, privateChatUseCase, messageRepo, chatRoomRepo, wsHub, redisClient, logger)
-	agencyUseCase := usecase.NewAgencyUseCase(hostAppRepo, agencyRepo, walletUseCase, logger)
-	paymentUseCase := usecase.NewPaymentUseCase(txRepo, duitkuPaymentRepo, walletUseCase, duitkuClient, redisClient, logger)
-	cryptoUseCase := usecase.NewCryptoUseCase(cryptoRepo, walletUseCase, redisClient, logger, []byte(cfg.CryptoEncryptionKey), cfg.CryptoMasterMnemonic)
-	paidInteractionUseCase := usecase.NewPaidInteractionUsecase(paidInteractionRepo, walletRepo, txRepo, userRepo, agencyRepo, redisClient, logger)
-	payoutUseCase := usecase.NewPayoutUsecase(
-		payoutMethodRepo,
-		cryptoPayoutAddressRepo,
-		[]byte(cfg.CryptoEncryptionKey),
-		cfg.MicroDepositVerifyEnabled,
-		logger,
-	)
-	pushUseCase := usecase.NewPushNotificationUsecase(
-		pushSubscriptionRepo,
-		cfg.VAPIDPublicKey,
-		cfg.VAPIDPrivateKey,
-		cfg.VAPIDSubject,
-		logger,
-	)
-	withdrawalUseCase := usecase.NewWithdrawalUsecase(withdrawalRepo, walletRepo, txRepo, agencyRepo, userRepo, payoutUseCase, redisClient, logger)
-	bookingUseCase := usecase.NewBookingUsecase(bookingRepo, walletRepo, agencyRepo, withdrawalUseCase, redisClient, logger)
-	offerRepo := repository.NewOfferRepository(db.Pool(), logger)
-	offerUseCase := usecase.NewOfferUsecase(offerRepo, bookingRepo, bookingUseCase, walletRepo, agencyRepo, redisClient, logger)
-	locationUseCase := usecase.NewLocationUsecase(bookingRepo, redisClient, logger)
-	creatorTokenUseCase := usecase.NewCreatorTokenUseCase(creatorTokenRepo, walletRepo, txRepo, logger)
-	predictionUseCase := usecase.NewPredictionUseCase(predictionRepo, streamRepo, walletRepo, txRepo, creatorTokenRepo, logger)
-	drmUseCase := usecase.NewDRMUseCase(drmRepo, vodRepo, logger)
-	recommendationUseCase := usecase.NewRecommendationUseCase(recommendationRepo, streamRepo, vodRepo, logger)
-	clipUseCase := usecase.NewClipUseCase(clipRepo, streamRepo, redisClient, logger)
-	extraMonetizationUseCase := usecase.NewMonetizationUseCase(monetizationRepo, walletRepo, txRepo, streamRepo, logger)
 
-	// New KYC and Subscription Usecases
-	kycUseCase := usecase.NewKYCUseCase(kycRepo, userRepo, bannedRepo, streamRepo, onboardRepo, logger)
-	onboardingUseCase := usecase.NewOnboardingUseCase(onboardRepo, userRepo, logger)
-	clipSubUseCase := usecase.NewClipSubscriptionUseCase(clipSubRepo, userRepo, walletUseCase, logger)
-	dashboardUseCase := usecase.NewDashboardUseCase(
-		dashboardRepo,
-		userRepo,
-		bannedRepo,
-		streamRepo,
-		commentRepo,
-		kycRepo,
-		agencyRepo,
-		logger,
-	)
+	// 3. Periodic Smart Reminder Check
+	jobManager.Register("smart-reminders", 1*time.Minute, func(ctx context.Context) {
+		_ = app.ScheduleUseCase.CheckAndSendTieredReminders(ctx)
+	})
 
-	// Initialize ModerationUseCase & NSFW Scanner (Fitur 6)
-	nsfwScanner := usecase.NewAWSRekognitionScanner(logger)
-	moderationUseCase := usecase.NewModerationUseCase(moderationRepo, wsHub, redisClient, logger, nsfwScanner)
-	wsHub.SetModerationUseCase(moderationUseCase)
+	// 4. Daily Occurrence Generator Refill Job
+	jobManager.RegisterWithDelay("occurrence-refill", 12*time.Hour, 5*time.Second, func(ctx context.Context) {
+		_ = app.ScheduleUseCase.RefillAllOccurrences(ctx)
+	})
 
-	// Initialize and start background ModerationWorker
-	moderationWorker := workerV1.NewModerationWorker(moderationUseCase, logger)
-	go moderationWorker.Start(context.Background())
-	defer moderationWorker.Stop()
+	go app.CryptoMonitor.Start(context.Background())
+	defer app.CryptoMonitor.Stop()
 
-	// Wait Room & Stream Schedule initialization (Fitur 7)
-	waitRoomHub := websocket.NewWaitRoomHub(db.Pool(), redisClient, logger)
-	go waitRoomHub.Run()
+	// 5. Periodic Disappearing Messages Processor
+	jobManager.Register("disappearing-msgs", 5*time.Second, func(ctx context.Context) {
+		_ = app.PrivateChatUseCase.ProcessExpiredMessages(ctx)
+	})
 
-	scheduleRepo := repository.NewLiveScheduleRepository(db.Pool(), logger)
-	scheduleUseCase := usecase.NewLiveScheduleUseCase(scheduleRepo, waitRoomHub, wsHub, redisClient, logger)
+	// 6. Background Workers - VIP Expiry Check
+	jobManager.Register("vip-expiry", 1*time.Hour, func(ctx context.Context) {
+		_ = app.VIPUseCase.ProcessExpiredVIP(ctx)
+	})
 
-	// Periodic Smart Reminder Check (Fitur 7)
-	go func() {
-		ticker := time.NewTicker(1 * time.Minute)
-		defer ticker.Stop()
-		for range ticker.C {
-			_ = scheduleUseCase.CheckAndSendTieredReminders(context.Background())
-		}
-	}()
+	// 7. Background Workers - Host Level Evaluation
+	jobManager.Register("host-level-eval", 6*time.Hour, func(ctx context.Context) {
+		_ = app.HostLevelUseCase.EvaluateAndPromote(ctx)
+	})
 
-	// Daily Occurrence Generator Refill Job (Fitur 7)
-	go func() {
-		time.Sleep(5 * time.Second) // Let system warm up first
-		_ = scheduleUseCase.RefillAllOccurrences(context.Background())
-		ticker := time.NewTicker(12 * time.Hour)
-		defer ticker.Stop()
-		for range ticker.C {
-			_ = scheduleUseCase.RefillAllOccurrences(context.Background())
-		}
-	}()
+	// WebRTC Room Manager (Internal sync)
+	app.StreamUseCase.StartViewerCountSyncJob(context.Background(), app.WebRTCRoomManager)
 
-	cryptoMonitor := workerV1.NewCryptoMonitor(cryptoRepo, cryptoUseCase, solanaClient, evmClient, logger)
-	go cryptoMonitor.Start(context.Background())
-	defer cryptoMonitor.Stop()
-
-	// Periodic Disappearing Messages Processor (Fitur 8)
-	go func() {
-		ticker := time.NewTicker(5 * time.Second)
-		defer ticker.Stop()
-		for range ticker.C {
-			_ = privateChatUseCase.ProcessExpiredMessages(context.Background())
-		}
-	}()
-
-	// WebRTC Room Manager
-	webrtcRoomManager := webrtc.NewRoomManager(logger)
-	streamUseCase.StartViewerCountSyncJob(context.Background(), webrtcRoomManager)
-
-	// Initialize handlers
-	handler := delivery.NewHandler(
-		authUseCase,
-		userUseCase,
-		storyUseCase,
-		commentUseCase,
-		likeUseCase,
-		messageUseCase,
-		privateChatUseCase,
-		paidInteractionUseCase,
-		bookingUseCase,
-		offerUseCase,
-		locationUseCase,
-		scheduleUseCase,
-		waitRoomHub,
-		wsHub,
-		logger,
-	)
-	webrtcHandler := delivery.NewWebRTCHandler(webrtcRoomManager, streamUseCase, authUseCase, trendingUseCase, scheduleUseCase, logger)
-	pkHandler := delivery.NewPKBattleHandler(pkUseCase, logger)
-	vodHandler := delivery.NewVODHandler(vodUseCase, logger)
-	monetizationHandler := delivery.NewMonetizationHandler(walletUseCase, giftUseCase, agencyUseCase, paymentUseCase, withdrawalUseCase, logger)
-	extraMonetizationHandler := delivery.NewExtraMonetizationHandler(extraMonetizationUseCase, logger)
-	healthHandler := delivery.NewHealthHandler(db.Pool(), redisClient, msgBroker)
-	cryptoHandler := delivery.NewCryptoHandler(cryptoUseCase, cryptoMonitor, logger)
-	moderationHandler := delivery.NewModerationHandler(moderationUseCase, logger)
-	creatorTokenHandler := delivery.NewCreatorTokenHandler(creatorTokenUseCase, logger)
-	predictionHandler := delivery.NewPredictionHandler(predictionUseCase, logger)
-	drmHandler := delivery.NewDRMHandler(drmUseCase, vodUseCase, logger)
-	recommendationHandler := delivery.NewRecommendationHandler(recommendationUseCase, logger)
-	clipHandler := delivery.NewClipHandler(clipUseCase, logger)
-
-	// New KYC and Subscription Handlers
-	kycHandler := delivery.NewKYCHandler(kycUseCase, onboardingUseCase, logger)
-	clipSubHandler := delivery.NewClipSubscriptionHandler(clipSubUseCase, logger)
-	dashboardHandler := delivery.NewDashboardHandler(dashboardUseCase, logger)
-	payoutHandler := delivery.NewPayoutHandler(payoutUseCase, logger)
-	pushHandler := delivery.NewPushHandler(pushUseCase, logger)
-
-	// Initialize middleware
-	authMiddleware := middleware.NewAuthMiddleware(authService, redisClient, logger)
-	rbacMiddleware := middleware.NewRBACMiddleware(rbacManager, logger)
-	rateLimitMiddleware := middleware.NewRateLimitMiddleware(
-		redisClient,
-		logger,
-		cfg.RateLimitEnabled,
-		cfg.RateLimitRequests,
-		cfg.RateLimitWindow,
-	)
-
-	// Initialize Idempotency Manager
-	idempotencyManager := wallet.NewIdempotencyManager(redisClient, logger)
-
-	// New Middlewares
-	banCheckerMiddleware := middleware.NewBanChecker(bannedRepo, logger)
-	clipQuotaMiddleware := middleware.NewClipQuotaMiddleware(clipSubUseCase, logger)
-
-	// Setup router
-	router := delivery.SetupRouter(
-		handler,
-		webrtcHandler,
-		vodHandler,
-		monetizationHandler,
-		extraMonetizationHandler,
-		healthHandler,
-		cryptoHandler,
-		pkHandler,
-		moderationHandler,
-		creatorTokenHandler,
-		predictionHandler,
-		drmHandler,
-		recommendationHandler,
-		clipHandler,
-		kycHandler,
-		clipSubHandler,
-		dashboardHandler,
-		payoutHandler,
-		pushHandler,
-		authMiddleware,
-		rbacMiddleware,
-		rateLimitMiddleware,
-		idempotencyManager,
-		banCheckerMiddleware,
-		clipQuotaMiddleware,
-		logger,
-	)
+	// Start all periodic background jobs
+	jobManager.StartAll()
+	defer jobManager.StopAll()
 
 	// Create HTTP server
 	server := &http.Server{
 		Addr:         fmt.Sprintf("%s:%s", cfg.ServerHost, cfg.ServerPort),
-		Handler:      middleware.CORSWrapper(router),
+		Handler:      middleware.CORSWrapper(app.Router),
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
@@ -483,18 +194,18 @@ func main() {
 
 	// 1. Drain WebSocket connections gracefully (Fase 5)
 	logger.Info("Stopping WebSocket Hub...")
-	wsHub.Stop()
+	app.WSHub.Stop()
 
 	// 2. Flush critical Redis caches or close cleanly
-	if redisClient != nil {
+	if app.Redis != nil {
 		logger.Info("Closing Redis client...")
-		_ = redisClient.Close()
+		_ = app.Redis.Close()
 	}
 
 	// 3. Close database pools gracefully
-	if db != nil {
+	if app.DB != nil {
 		logger.Info("Closing PostgreSQL connection pool...")
-		db.Close()
+		app.DB.Close()
 	}
 
 	logger.Info("Server exited cleanly")

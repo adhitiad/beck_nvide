@@ -1,0 +1,26 @@
+<USER_REQUEST>
+buatkan sayan frontnd yang haarus sesuai dgn @[bEck_NVide], @[front_nvide/package.json], dan @[front_nvide/AGENTS.md]@mcp:better-auth @mcp:shadcn 
+
+bila ada yang erlu di tambahkan maka taambahkan 
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-05-16T15:09:28+07:00.
+
+The user's current state is as follows:
+Active Document: c:\Users\humas\.gemini\antigravity\mcp_config.json (LANGUAGE_JSON)
+Cursor is on line: 1
+Other open documents:
+- c:\Users\humas\.gemini\antigravity\mcp_config.json (LANGUAGE_JSON)
+No browser pages are currently open.
+
+The user has mentioned some items in the form @[ITEM]. Here is extra information about the items that were mentioned by the user, in the order that they appear:
+
+@[bEck_NVide] is a [Directory]:
+e:\nvide\bEck_NVide
+@[front_nvide/package.json] is a [File]:
+e:\nvide\front_nvide\package.json
+@[front_nvide/AGENTS.md] is a [File]:
+e:\nvide\front_nvide\AGENTS.md
+</ADDITIONAL_METADATA>
+<USER_SETTINGS_CHANGE>
+<truncated 265 bytes>

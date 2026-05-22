@@ -1,0 +1,23 @@
+<USER_REQUEST>
+Buatkan backend Go untuk Fase 2: Core Social Features platform live streaming.
+
+SPESIFIKASI TEKNIS:
+- Router: Gorilla Mux
+- Database: PostgreSQL (pgx/v5)
+- Cache: Redis Cloud (go-redis/v9)
+- Real-time: Gorilla WebSocket
+- Message Broker: Native implementation menggunakan Go channel + Redis Pub/Sub hybrid
+
+YANG HARUS DIBUAT:
+
+1. STORIES MODULE
+   - Create Story: upload metadata (media_url, type, caption), set expires_at +24 jam, limit 10/24jam per user
+   - Get Stories: stream stories dari following users (bisa mock following dulu), sertakan view_count
+   - View Story: track viewer_id, increment view count (Redis counter + sync DB)
+   - Auto-expire: background worker / scheduler untuk soft-delete story expired
+   - Get Story Viewers: list user yang sudah melihat story
+
+2. COMMENTS MODULE
+   - Add Comment: pada content (stream/story/vod), support parent_id untuk reply (max 1 level nested)
+   - Get Comments: pagination dengan sorting (hot/newest/top), sertakan like_count
+<truncated 2355 bytes>

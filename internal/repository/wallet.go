@@ -215,10 +215,14 @@ func (r *transactionRepository) GetByID(ctx context.Context, id domain.UUID) (*d
 	exec := r.getExecutor(ctx)
 	query := `SELECT id, user_id, type, amount, currency, status, reference_id, payment_method, metadata, created_at FROM transactions WHERE id = $1`
 	var tx domain.Transaction
-	err := exec.QueryRow(ctx, query, id).Scan(&tx.ID, &tx.UserID, &tx.Type, &tx.Amount, &tx.Currency, &tx.Status, &tx.ReferenceID, &tx.PaymentMethod, &tx.Metadata, &tx.CreatedAt)
+	var refID, paymentMethod, metadata *string
+	err := exec.QueryRow(ctx, query, id).Scan(&tx.ID, &tx.UserID, &tx.Type, &tx.Amount, &tx.Currency, &tx.Status, &refID, &paymentMethod, &metadata, &tx.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
+	if refID != nil { tx.ReferenceID = *refID }
+	if paymentMethod != nil { tx.PaymentMethod = *paymentMethod }
+	if metadata != nil { tx.Metadata = *metadata }
 	return &tx, nil
 }
 
@@ -226,13 +230,17 @@ func (r *transactionRepository) GetByReferenceID(ctx context.Context, refID stri
 	exec := r.getExecutor(ctx)
 	query := `SELECT id, user_id, type, amount, currency, status, reference_id, payment_method, metadata, created_at FROM transactions WHERE reference_id = $1`
 	var tx domain.Transaction
-	err := exec.QueryRow(ctx, query, refID).Scan(&tx.ID, &tx.UserID, &tx.Type, &tx.Amount, &tx.Currency, &tx.Status, &tx.ReferenceID, &tx.PaymentMethod, &tx.Metadata, &tx.CreatedAt)
+	var refIDPtr, paymentMethod, metadata *string
+	err := exec.QueryRow(ctx, query, refID).Scan(&tx.ID, &tx.UserID, &tx.Type, &tx.Amount, &tx.Currency, &tx.Status, &refIDPtr, &paymentMethod, &metadata, &tx.CreatedAt)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, domain.ErrNotFound
 		}
 		return nil, err
 	}
+	if refIDPtr != nil { tx.ReferenceID = *refIDPtr }
+	if paymentMethod != nil { tx.PaymentMethod = *paymentMethod }
+	if metadata != nil { tx.Metadata = *metadata }
 	return &tx, nil
 }
 
@@ -259,8 +267,18 @@ func (r *transactionRepository) ListByUser(ctx context.Context, userID domain.UU
 	var txs []*domain.Transaction
 	for rows.Next() {
 		var tx domain.Transaction
-		if err := rows.Scan(&tx.ID, &tx.UserID, &tx.Type, &tx.Amount, &tx.Currency, &tx.Status, &tx.ReferenceID, &tx.PaymentMethod, &tx.Metadata, &tx.CreatedAt); err != nil {
+		var refID, paymentMethod, metadata *string
+		if err := rows.Scan(&tx.ID, &tx.UserID, &tx.Type, &tx.Amount, &tx.Currency, &tx.Status, &refID, &paymentMethod, &metadata, &tx.CreatedAt); err != nil {
 			return nil, err
+		}
+		if refID != nil {
+			tx.ReferenceID = *refID
+		}
+		if paymentMethod != nil {
+			tx.PaymentMethod = *paymentMethod
+		}
+		if metadata != nil {
+			tx.Metadata = *metadata
 		}
 		txs = append(txs, &tx)
 	}

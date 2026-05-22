@@ -33,6 +33,16 @@ func SetupRouter(
 	dashboardHandler *DashboardHandler,
 	payoutHandler *PayoutHandler,
 	pushHandler *PushHandler,
+	// Platform Overhaul Handlers
+	vipHandler *VIPHandler,
+	royalFamilyHandler *RoyalFamilyHandler,
+	shortVideoHandler *ShortVideoHandler,
+	inventoryHandler *InventoryHandler,
+	wheelHandler *WheelHandler,
+	missionHandler *MissionHandler,
+	voiceRoomHandler *VoiceRoomHandler,
+	luckyBagHandler *LuckyBagHandler,
+	hostLevelHandler *HostLevelHandler,
 	authMiddleware *middleware.AuthMiddleware,
 	rbacMiddleware *middleware.RBACMiddleware,
 	rateLimitMiddleware *middleware.RateLimitMiddleware,
@@ -397,6 +407,92 @@ func SetupRouter(
 		// AI Companion
 		protected.HandleFunc("/ai/chat", extraMonetizationHandler.SendAIChatMessage).Methods("POST")
 		protected.HandleFunc("/ai/chat/history", extraMonetizationHandler.GetAIChatHistory).Methods("GET")
+	}
+
+	// ===== PLATFORM OVERHAUL ROUTES =====
+
+	// VIP System
+	if vipHandler != nil {
+		apiV1.HandleFunc("/vip/plans", vipHandler.ListPlans).Methods("GET")
+		protected.HandleFunc("/vip/subscribe", vipHandler.Subscribe).Methods("POST")
+		protected.HandleFunc("/vip/me", vipHandler.GetMyVIP).Methods("GET")
+		protected.HandleFunc("/vip/auto-renew", vipHandler.SetAutoRenew).Methods("PUT")
+		protected.HandleFunc("/vip/emoticons", vipHandler.GetEmoticons).Methods("GET")
+		protected.HandleFunc("/vip/entry-effect", vipHandler.GetEntryEffect).Methods("GET")
+	}
+
+	// Royal Family / Clan
+	if royalFamilyHandler != nil {
+		protected.HandleFunc("/royal-families", royalFamilyHandler.Create).Methods("POST")
+		protected.HandleFunc("/royal-families/me", royalFamilyHandler.GetMyFamily).Methods("GET")
+		protected.HandleFunc("/royal-families/top", royalFamilyHandler.GetTopFamilies).Methods("GET")
+		protected.HandleFunc("/royal-families/{id}", royalFamilyHandler.GetFamily).Methods("GET")
+		protected.HandleFunc("/royal-families/{id}/join", royalFamilyHandler.Join).Methods("POST")
+		protected.HandleFunc("/royal-families/leave", royalFamilyHandler.Leave).Methods("POST")
+		protected.HandleFunc("/royal-families/contribute", royalFamilyHandler.Contribute).Methods("POST")
+		protected.HandleFunc("/royal-families/{id}/members", royalFamilyHandler.GetMembers).Methods("GET")
+		protected.HandleFunc("/royal-families/{id}/leaderboard", royalFamilyHandler.GetLeaderboard).Methods("GET")
+	}
+
+	// Short Video (TikTok-like)
+	if shortVideoHandler != nil {
+		protected.HandleFunc("/short-videos", shortVideoHandler.Upload).Methods("POST")
+		protected.HandleFunc("/short-videos/feed", shortVideoHandler.GetFeed).Methods("GET")
+		apiV1.HandleFunc("/short-videos/trending", shortVideoHandler.GetTrending).Methods("GET")
+		protected.HandleFunc("/short-videos/{id}", shortVideoHandler.GetVideo).Methods("GET")
+		protected.HandleFunc("/short-videos/{id}", shortVideoHandler.Delete).Methods("DELETE")
+		protected.HandleFunc("/short-videos/{id}/like", shortVideoHandler.Like).Methods("POST")
+		protected.HandleFunc("/short-videos/{id}/unlike", shortVideoHandler.Unlike).Methods("POST")
+		protected.HandleFunc("/short-videos/{id}/comments", shortVideoHandler.Comment).Methods("POST")
+		apiV1.HandleFunc("/short-videos/{id}/comments", shortVideoHandler.GetComments).Methods("GET")
+		protected.HandleFunc("/short-videos/{id}/share", shortVideoHandler.Share).Methods("POST")
+		apiV1.HandleFunc("/users/{userId}/short-videos", shortVideoHandler.GetUserVideos).Methods("GET")
+	}
+
+	// Inventory / Backpack
+	if inventoryHandler != nil {
+		protected.HandleFunc("/inventory", inventoryHandler.GetMyInventory).Methods("GET")
+		protected.HandleFunc("/inventory/{itemId}/use", inventoryHandler.UseItem).Methods("POST")
+		apiV1.HandleFunc("/inventory/catalog", inventoryHandler.ListCatalog).Methods("GET")
+	}
+
+	// Wheel of Fortune
+	if wheelHandler != nil {
+		apiV1.HandleFunc("/wheel/prizes", wheelHandler.GetPrizes).Methods("GET")
+		protected.HandleFunc("/wheel/spin", wheelHandler.Spin).Methods("POST")
+		protected.HandleFunc("/wheel/history", wheelHandler.GetHistory).Methods("GET")
+	}
+
+	// Daily Missions & Gamification
+	if missionHandler != nil {
+		protected.HandleFunc("/missions/daily", missionHandler.GetDailyMissions).Methods("GET")
+		protected.HandleFunc("/missions/{missionId}/claim", missionHandler.ClaimReward).Methods("POST")
+		protected.HandleFunc("/badges", missionHandler.GetBadges).Methods("GET")
+		apiV1.HandleFunc("/leaderboard", missionHandler.GetLeaderboard).Methods("GET")
+	}
+
+	// Voice Chat Room
+	if voiceRoomHandler != nil {
+		protected.HandleFunc("/voice-rooms", voiceRoomHandler.CreateRoom).Methods("POST")
+		apiV1.HandleFunc("/voice-rooms", voiceRoomHandler.ListActive).Methods("GET")
+		protected.HandleFunc("/voice-rooms/{id}", voiceRoomHandler.GetRoom).Methods("GET")
+		protected.HandleFunc("/voice-rooms/{id}/join", voiceRoomHandler.JoinRoom).Methods("POST")
+		protected.HandleFunc("/voice-rooms/{id}/leave", voiceRoomHandler.LeaveRoom).Methods("POST")
+		protected.HandleFunc("/voice-rooms/{id}/request-stage", voiceRoomHandler.RequestStage).Methods("POST")
+		protected.HandleFunc("/voice-rooms/{id}/end", voiceRoomHandler.EndRoom).Methods("POST")
+	}
+
+	// Lucky Bag
+	if luckyBagHandler != nil {
+		protected.HandleFunc("/lucky-bags", luckyBagHandler.CreateBag).Methods("POST")
+		protected.HandleFunc("/lucky-bags/{id}/claim", luckyBagHandler.ClaimBag).Methods("POST")
+		apiV1.HandleFunc("/streams/{streamId}/lucky-bags", luckyBagHandler.GetActiveByStream).Methods("GET")
+	}
+
+	// Host Level System
+	if hostLevelHandler != nil {
+		apiV1.HandleFunc("/host-levels", hostLevelHandler.GetLevels).Methods("GET")
+		protected.HandleFunc("/host-levels/me", hostLevelHandler.GetMyLevel).Methods("GET")
 	}
 
 	// Health check — must be registered before rate limiter to stay unauthenticated

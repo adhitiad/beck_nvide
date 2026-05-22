@@ -1,0 +1,30 @@
+<USER_REQUEST>
+Perbaiki foundation backend Go yang sudah ada (beck_nvide) sebelum lanjut ke fase berikutnya.
+
+PROBLEM YANG HARUS DI-FIX:
+
+1. UUID v4 → v7 Migration
+   - Ganti semua uuid.New() ke uuid.NewV7()
+   - Buat wrapper package pkg/uuid untuk konsistensi
+   - Existing data tetap v4 (backward compatible)
+
+2. Worker Pool Implementation
+   - Buat pkg/worker/pool.go dengan channel-based job queue
+   - Support: video_transcode, image_scan, email_send, notification_push
+   - Retry dengan exponential backoff
+   - Graceful shutdown handling
+
+3. Redis Pub/Sub Broker
+   - Buat pkg/websocket/broker.go
+   - Pattern: Publish ke Redis channel, Subscribe dari semua instance
+   - Format message: { event, room_id, payload, timestamp, node_id }
+   - Prevent echo loop (skip jika node_id == self)
+
+4. Idempotency Layer
+   - Buat pkg/wallet/idempotency.go
+   - Redis SET NX EX 86400
+   - Wajib X-Idempotency-Key header untuk semua POST financial
+   - Reject duplicate dengan 409 Conflict
+
+5. Database Pool Tuning
+<truncated 1627 bytes>

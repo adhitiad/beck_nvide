@@ -1,6 +1,9 @@
 package middleware
 
 import (
+	"bufio"
+	"errors"
+	"net"
 	"net/http"
 	"strconv"
 	"time"
@@ -24,6 +27,14 @@ func (rd *responseWriterDelegator) Write(b []byte) (int, error) {
 		rd.status = http.StatusOK
 	}
 	return rd.ResponseWriter.Write(b)
+}
+
+func (rd *responseWriterDelegator) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := rd.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, errors.New("ResponseWriter does not implement http.Hijacker")
+	}
+	return hijacker.Hijack()
 }
 
 // MetricsMiddleware tracks HTTP request count, duration, and status codes for Prometheus

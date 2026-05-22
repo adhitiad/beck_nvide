@@ -1,0 +1,16 @@
+<USER_REQUEST>
+Explain what this problem is and help me fix it: Property url is not allowed. @[c:\Users\humas\.gemini\antigravity\mcp_config.json:L20]
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-05-16T14:57:19+07:00.
+
+The user's current state is as follows:
+Active Document: c:\Users\humas\.gemini\antigravity\mcp_config.json (LANGUAGE_JSON)
+Cursor is on line: 1
+Other open documents:
+- c:\Users\humas\.gemini\antigravity\mcp_config.json (LANGUAGE_JSON)
+No browser pages are currently open.
+</ADDITIONAL_METADATA>
+<USER_SETTINGS_CHANGE>
+The user changed setting `Model Selection` from None to Gemini 3.1 Pro (High). No need to comment on this change if the user doesn't ask about it. If reporting what model you are, please use a human readable name instead of the exact string.
+</USER_SETTINGS_CHANGE>

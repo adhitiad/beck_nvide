@@ -1,0 +1,17 @@
+<USER_REQUEST>
+Saya sedang mengembangkan backend platform live streaming NVide Live menggunakan Go. 
+
+Saat ini backend sudah memiliki:
+- Autentikasi (register, login, JWT access & refresh token, token blacklist via Redis).
+- RBAC dengan 5 role (guest, user, host, agency, admin) dan middleware otorisasi.
+- 9 file migrasi database PostgreSQL yang sudah mencakup seluruh skema tabel (dari user, roles, permissions, hingga streams, comments, likes, levels, wallet, gifts, transactions, bookings, agencies, private chat, paid interactions, dll.).
+- Struktur proyek Clean Architecture: domain, usecase, repository, delivery, middleware, dan pkg.
+- Belum ada implementasi logika bisnis selain auth.
+
+Tugas Anda:
+Implementasikan SELURUH fitur backend yang sudah dirancang dalam migrasi, dengan prioritas:
+
+1. Streaming & Chat (prioritas tertinggi)
+   - Manajemen stream: CRUD stream, mulai/akhiri siaran.
+   - WebSocket server untuk live chat per stream (autentikasi via token, simpan pesan ke tabel comments).
+<truncated 2800 bytes>

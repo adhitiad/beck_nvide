@@ -1,0 +1,18 @@
+<USER_REQUEST>
+Saya sedang mengembangkan backend platform live streaming dewasa 18+ "NVide Live" menggunakan Go (Clean Architecture). Repositori: https://github.com/adhitiad/beck_nvide.
+
+Saat ini backend sudah memiliki:
+- Autentikasi (JWT + refresh token + RBAC).
+- 9 file migrasi database PostgreSQL.
+- WebSocket untuk live chat dan signaling WebRTC.
+- Fitur dasar: streaming, komentar, like, leveling, wallet, gift, booking, private call.
+- NOWPayments terintegrasi (SOL, BTC, USDT-BEP20).
+- Tokenisasi Kreator, Pasar Prediksi, DRM, Rekomendasi AI, Private Room, Request Show, AI Chatbot.
+
+Tugas Anda:
+Perbaiki dan tambahkan fitur-fitur berikut dengan arsitektur Clean Architecture. Gunakan library: Gorilla Mux, pgx/v5, go-redis/v9, gorilla/websocket, Uber Zap.
+
+### BAGIAN A: PERBAIKAN MULTI-BAHASA & KONFIGURASI
+
+#### A1. Multi-Bahasa (i18n)
+<truncated 7584 bytes>

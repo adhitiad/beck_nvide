@@ -1,0 +1,20 @@
+<USER_REQUEST>
+Cannot read properties of undefined (reading 'access_token')
+</USER_REQUEST>
+<ADDITIONAL_METADATA>
+The current local time is: 2026-05-16T16:46:24+07:00.
+
+The user's current state is as follows:
+Active Document: e:\nvide\bEck_NVide\.gitignore (LANGUAGE_UNSPECIFIED)
+Cursor is on line: 1
+Other open documents:
+- e:\nvide\bEck_NVide\.gitignore (LANGUAGE_UNSPECIFIED)
+- e:\nvide\front_nvide\.gitignore (LANGUAGE_UNSPECIFIED)
+- e:\nvide\bEck_NVide\internal\delivery\router.go (LANGUAGE_GO)
+- e:\nvide\bEck_NVide\internal\middleware\common.go (LANGUAGE_GO)
+- e:\nvide\bEck_NVide\main.go (LANGUAGE_GO)
+No browser pages are currently open.
+</ADDITIONAL_METADATA>
+<USER_SETTINGS_CHANGE>
+The user changed setting `Model Selection` from None to . No need to comment on this change if the user doesn't ask about it. If reporting what model you are, please use a human readable name instead of the exact string.
+</USER_SETTINGS_CHANGE>

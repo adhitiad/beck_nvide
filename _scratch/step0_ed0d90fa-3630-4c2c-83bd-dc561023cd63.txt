@@ -1,0 +1,23 @@
+<USER_REQUEST>
+Baik, berikut spesifikasi lengkap untuk fitur **Private Chat (DM)** yang akan ditambahkan ke platform live streaming Anda.
+
+---
+
+# 💬 PRIVATE CHAT (DM) — SPESIFIKASI LENGKAP
+
+## 📍 Penempatan Arsitektur
+Private Chat menjadi **Extension Fase 2** (Core Social) atau bisa dikerjakan paralel dengan Fase 3. Menggunakan infrastruktur WebSocket yang sama (Gorilla) dengan isolasi room berbasis `conversation_id`.
+
+---
+
+## 🧠 1. CONTEXT
+
+### Tujuan
+Membangun sistem direct messaging 1-on-1 antar pengguna dengan dukungan text, media, gift, read receipts, dan manajemen privasi (block, mute, delete).
+
+### Stack Aktif
+- **PostgreSQL** — conversations, messages, conversation_participants, attachments, message_reactions
+- **Redis** — unread count per user, online status, typing indicator, recent conversations cache
+- **Gorilla WebSocket** — real-time message delivery & typing status
+- **Message Broker (Native)** — cross-instance message routing & push notification trigger
+<truncated 15859 bytes>

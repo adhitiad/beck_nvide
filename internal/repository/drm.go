@@ -29,7 +29,7 @@ func (r *drmRepository) ensureTablesExist() {
 	ctx := context.Background()
 	query := `
 	CREATE TABLE IF NOT EXISTS vod_drm_keys (
-		vod_id UUID PRIMARY KEY REFERENCES vods(id) ON DELETE CASCADE,
+		vod_id UUID PRIMARY KEY REFERENCES vod_media(id) ON DELETE CASCADE,
 		key_value BYTEA NOT NULL,
 		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	);`

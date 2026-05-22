@@ -33,20 +33,26 @@ func NewAuthMiddleware(authService *auth.Service, redisClient *redis.Client, log
 // Middleware validates JWT token and injects user info into context
 func (m *AuthMiddleware) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Get token from Authorization header
+		// Get token from Authorization header or query parameter
+		var tokenString string
 		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
-			writeJSONError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing authorization header")
-			return
+		
+		if authHeader != "" {
+			parts := strings.Split(authHeader, " ")
+			if len(parts) == 2 && parts[0] == "Bearer" {
+				tokenString = parts[1]
+			}
 		}
 
-		// Extract token (Bearer <token>)
-		parts := strings.Split(authHeader, " ")
-		if len(parts) != 2 || parts[0] != "Bearer" {
-			writeJSONError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Invalid authorization header format")
+		// Fallback to query parameter (especially for WebSockets)
+		if tokenString == "" {
+			tokenString = r.URL.Query().Get("token")
+		}
+
+		if tokenString == "" {
+			writeJSONError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Missing authorization token")
 			return
 		}
-		tokenString := parts[1]
 
 		// Validate token
 		claims, err := m.authService.ValidateToken(tokenString)

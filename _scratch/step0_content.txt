@@ -1,0 +1,17 @@
+<USER_REQUEST>
+Saya sedang mengembangkan backend platform live streaming dewasa 18+ "NVide Live" menggunakan Go dengan Clean Architecture. Repositori: https://github.com/adhitiad/beck_nvide.
+
+Saat ini backend sudah memiliki:
+- Autentikasi (JWT + refresh token + RBAC).
+- 9 file migrasi database PostgreSQL yang mencakup tabel users, roles, streams, comments, likes, levels, wallet, gifts, transactions, bookings, agencies, private_chat, paid_interactions, dll.
+- WebSocket untuk live chat dan signaling WebRTC.
+- Fitur dasar streaming, komentar, like, leveling, wallet, gift, booking, private call.
+- NOWPayments terintegrasi untuk pembayaran crypto (SOL, BTC, USDT-BEP20).
+
+Tugas Anda:
+Implementasikan fitur-fitur BARU berikut secara lengkap dengan arsitektur Clean Architecture (domain, usecase, repository, delivery, middleware). Gunakan library: Gorilla Mux, pgx/v5, go-redis/v9, gorilla/websocket, Uber Zap.
+
+### DAFTAR FITUR YANG HARUS DIIMPLEMENTASIKAN
+
+#### 1. Tokenisasi Kreator (Creator Tokens)
+<truncated 9488 bytes>

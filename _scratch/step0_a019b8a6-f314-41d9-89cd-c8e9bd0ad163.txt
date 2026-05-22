@@ -1,0 +1,9 @@
+<USER_REQUEST>
+
+2026/05/16 14:17:56 E:/nvide/bEck_NVide/pkg/database/automigrate.go:526 SLOW SQL >= 200ms
+[249.072ms] [rows:0] SELECT description FROM pg_catalog.pg_description WHERE objsubid = (SELECT ordinal_position FROM information_schema.columns WHERE table_schema = CURRENT_SCHEMA() AND table_name = 'booking_location_logs' AND column_name = 'recorded_at') AND objoid = (SELECT oid FROM pg_catalog.pg_class WHERE relname = 'booking_location_logs' AND relnamespace = (SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = CURRENT_SCHEMA()))
+
+2026/05/16 14:17:56 E:/nvide/bEck_NVide/pkg/database/automigrate.go:526 SLOW SQL >= 200ms
+[248.734ms] [rows:1] SELECT count(*) FROM pg_indexes WHERE tablename = 'booking_location_logs' AND indexname = 'idx_booking_location_logs_booking_id' AND schemaname = CURRENT_SCHEMA()
+{"level":"info","timestamp":"2026-05-16T14:17:56.420+0700","caller":"bEck_NVide/main.go:81","message":"Database auto-migration completed"}
+<truncated 3756 bytes>

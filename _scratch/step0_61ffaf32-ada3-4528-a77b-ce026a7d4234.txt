@@ -1,0 +1,13 @@
+<USER_REQUEST>
+ Pengembangan Lanjutan Platform Live Streaming NVide
+
+Konteks Proyek
+Saya sedang membangun platform live streaming bernama NVide Live yang terdiri dari dua repositori:
+
+· Backend: Go dengan Clean Architecture (https://github.com/adhitiad/beck_nvide)
+· Frontend: Next.js 16 dengan App Router (https://github.com/adhitiad/front_nvide)
+
+Saat ini backend sudah memiliki autentikasi (JWT + refresh token + RBAC) dan skema database lengkap via 9 file migrasi (dari 001_initial_schema.sql hingga 009_paid_interactions.sql), tetapi logika bisnis untuk fitur selain autentikasi belum diimplementasikan. Frontend baru memiliki halaman login, register, dashboard kosong, dan beberapa komponen UI (GiftPanel, CoinRain), serta file proxy.ts untuk WebRTC signaling.
+
+Tujuan
+<truncated 7255 bytes>

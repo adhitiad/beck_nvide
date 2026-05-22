@@ -29,14 +29,6 @@ type moderationUseCase struct {
 	wordlistMu    sync.RWMutex
 }
 
-type compiledWord struct {
-	ID            domain.UUID
-	Word          string
-	SeverityLevel int
-	Language      string
-	IsRegex       bool
-	Reg           *regexp.Regexp
-}
 
 func NewModerationUseCase(
 	repo domain.ModerationRepository,
@@ -59,46 +51,6 @@ func NewModerationUseCase(
 	return uc
 }
 
-func (u *moderationUseCase) ReloadWordlist(ctx context.Context) error {
-	u.wordlistMu.Lock()
-	defer u.wordlistMu.Unlock()
-
-	words, err := u.repo.GetWordlist(ctx)
-	if err != nil {
-		return err
-	}
-
-	var compiled []*compiledWord
-	for _, w := range words {
-		var r *regexp.Regexp
-		if w.IsRegex {
-			r, err = regexp.Compile("(?i)" + w.Word)
-			if err != nil {
-				u.logger.Warn("Failed to compile regex word", zap.String("word", w.Word), zap.Error(err))
-				continue
-			}
-		} else {
-			// exact word border matching
-			r, err = regexp.Compile("(?i)\\b" + regexp.QuoteMeta(w.Word) + "\\b")
-			if err != nil {
-				continue
-			}
-		}
-
-		compiled = append(compiled, &compiledWord{
-			ID:            w.ID,
-			Word:          w.Word,
-			SeverityLevel: w.SeverityLevel,
-			Language:      w.Language,
-			IsRegex:       w.IsRegex,
-			Reg:           r,
-		})
-	}
-
-	u.wordlistRegex = compiled
-	u.logger.Info("Toxicity wordlist compiled successfully", zap.Int("count", len(compiled)))
-	return nil
-}
 
 // AWSRekognitionScanner simulator
 type AWSRekognitionScanner struct {
@@ -831,114 +783,3 @@ func (u *moderationUseCase) SyncUserModerationStates(ctx context.Context) error 
 	return nil
 }
 
-// Wordlist CRUD
-func (u *moderationUseCase) GetWordlist(ctx context.Context) ([]*domain.ModerationWordlist, error) {
-	return u.repo.GetWordlist(ctx)
-}
-
-func (u *moderationUseCase) AddWord(ctx context.Context, word string, severity int, lang string, isRegex bool) error {
-	w := &domain.ModerationWordlist{
-		ID:            domain.NewUUID(),
-		Word:          word,
-		SeverityLevel: severity,
-		Language:      lang,
-		IsRegex:       isRegex,
-	}
-	err := u.repo.AddWord(ctx, w)
-	if err != nil {
-		return err
-	}
-	return u.ReloadWordlist(ctx)
-}
-
-func (u *moderationUseCase) DeleteWord(ctx context.Context, word string) error {
-	err := u.repo.DeleteWord(ctx, word)
-	if err != nil {
-		return err
-	}
-	return u.ReloadWordlist(ctx)
-}
-
-// Appeals & Support
-func (u *moderationUseCase) SubmitAppeal(ctx context.Context, logID domain.UUID, reason string) error {
-	log, err := u.repo.GetModerationLogByID(ctx, logID)
-	if err != nil || log == nil {
-		return fmt.Errorf("log not found")
-	}
-
-	now := time.Now()
-	// Mute/kick appeal window: 15 minutes. Ban appeal window: 7 days
-	limit := 15 * time.Minute
-	if log.ActionTaken == "ban_temp" || log.ActionTaken == "ban_perm" {
-		limit = 7 * 24 * time.Hour
-	}
-
-	if now.Sub(log.ActionExecutedAt) > limit {
-		return fmt.Errorf("appeal window has expired for this action")
-	}
-
-	log.IsAppealed = true
-	log.AppealStatus = "pending"
-	log.EvidenceContent = log.EvidenceContent + "\n[APPEAL REASON]: " + reason
-
-	return u.repo.SubmitAppealUpdate(ctx, logID, log.EvidenceContent)
-}
-
-func (u *moderationUseCase) ListLogs(ctx context.Context, userID *domain.UUID, streamID *domain.UUID, action *string, limit, offset int) ([]*domain.ModerationLog, error) {
-	return u.repo.ListModerationLogs(ctx, userID, streamID, action, limit, offset)
-}
-
-func (u *moderationUseCase) GetActiveBans(ctx context.Context) ([]*domain.UserModerationState, error) {
-	return u.repo.GetActiveBans(ctx)
-}
-
-func (u *moderationUseCase) ManualOverride(ctx context.Context, adminID domain.UUID, userID domain.UUID, actionType string, reason string) error {
-	state, err := u.repo.GetUserModerationState(ctx, userID)
-	if err != nil {
-		return err
-	}
-
-	if state == nil {
-		state = &domain.UserModerationState{
-			ID:     domain.NewUUID(),
-			UserID: userID,
-		}
-	}
-
-	now := time.Now()
-
-	if actionType == "unmute" {
-		state.IsMuted = false
-		state.MutedUntil = nil
-		_ = u.redis.Del(ctx, fmt.Sprintf("mod:mute:%s", userID))
-	} else if actionType == "unban" {
-		state.IsBanned = false
-		state.BannedUntil = nil
-		_ = u.redis.Del(ctx, fmt.Sprintf("jwt:blacklist:%s", userID))
-	} else if actionType == "mute" {
-		state.IsMuted = true
-		until := now.Add(24 * time.Hour) // manual default 24h
-		state.MutedUntil = &until
-		_ = u.redis.Set(ctx, fmt.Sprintf("mod:mute:%s", userID), "1", 24*time.Hour)
-	} else if actionType == "ban_perm" {
-		state.IsBanned = true
-		state.BanReason = reason
-		_ = u.redis.Set(ctx, fmt.Sprintf("jwt:blacklist:%s", userID), "1", 365*24*time.Hour)
-	}
-
-	err = u.repo.SaveUserModerationState(ctx, state)
-	if err != nil {
-		return err
-	}
-
-	// Immutable log
-	return u.repo.LogModerationAction(ctx, &domain.ModerationLog{
-		ID:               domain.NewUUID(),
-		UserID:           userID,
-		TriggerType:      "manual",
-		EvidenceType:     "admin_override",
-		EvidenceContent:  reason,
-		ActionTaken:      actionType,
-		ActionExecutedBy: &adminID,
-	})
-}
