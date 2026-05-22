@@ -71,14 +71,13 @@ func New(cfg *Config, logger *zap.Logger) (*DB, error) {
 	defer cancel()
 
 	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("failed to ping database: %w", err)
+		logger.Warn("Failed to ping database during startup (Supabase may be sleeping or unreachable). Continuing anyway...", zap.Error(err))
+	} else {
+		logger.Info("Database connection established",
+			zap.String("host", cfg.Host),
+			zap.String("database", cfg.DBName),
+		)
 	}
-
-	logger.Info("Database connection established",
-		zap.String("host", cfg.Host),
-		zap.String("database", cfg.DBName),
-	)
 
 	return &DB{pool: pool}, nil
 }
